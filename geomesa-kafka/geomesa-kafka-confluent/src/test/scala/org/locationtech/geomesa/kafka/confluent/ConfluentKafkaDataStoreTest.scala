@@ -16,7 +16,7 @@ import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, Produce
 import org.apache.kafka.common.serialization.StringSerializer
 import org.geotools.data.DataStoreFinder
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeParser.{GeomesaAvroCardinality, GeomesaAvroDateDefault, GeomesaAvroDateFormat, GeomesaAvroFeatureVisibility, GeomesaAvroGeomDefault, GeomesaAvroGeomFormat, GeomesaAvroGeomSrid, GeomesaAvroGeomType, GeomesaAvroIndex}
+import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeParser.{GeomesaAvroCardinality, GeomesaAvroDateDefault, GeoMesaAvroDateFormat, GeoMesaAvroFeatureVisibility, GeoMesaAvroGeomDefault, GeoMesaAvroGeomFormat, GeomesaAvroGeomSrid, GeoMesaAvroGeomType, GeomesaAvroIndex}
 import org.locationtech.geomesa.kafka.data.KafkaDataStore
 import org.locationtech.geomesa.security.SecurityUtils
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
@@ -53,9 +53,9 @@ class ConfluentKafkaDataStoreTest extends Specification {
          |    {
          |      "name":"position",
          |      "type":"string",
-         |      "${GeomesaAvroGeomFormat.KEY}":"${GeomesaAvroGeomFormat.WKT}",
-         |      "${GeomesaAvroGeomType.KEY}":"${GeomesaAvroGeomType.POINT}",
-         |      "${GeomesaAvroGeomDefault.KEY}":"${GeomesaAvroGeomDefault.TRUE}",
+         |      "${GeoMesaAvroGeomFormat.KEY}":"${GeoMesaAvroGeomFormat.WKT}",
+         |      "${GeoMesaAvroGeomType.KEY}":"${GeoMesaAvroGeomType.POINT}",
+         |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}",
          |      "${GeomesaAvroGeomSrid.KEY}":"${GeomesaAvroGeomSrid.EPSG_4326}"
          |    },
          |    {
@@ -65,13 +65,13 @@ class ConfluentKafkaDataStoreTest extends Specification {
          |    {
          |      "name":"date",
          |      "type":"string",
-         |      "${GeomesaAvroDateFormat.KEY}":"${GeomesaAvroDateFormat.ISO_INSTANT}",
+         |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.ISO_INSTANT}",
          |      "${GeomesaAvroDateDefault.KEY}":"${GeomesaAvroDateDefault.TRUE}"
          |    },
          |    {
          |      "name":"visibility",
          |      "type":"string",
-         |      "${GeomesaAvroFeatureVisibility.KEY}":"${GeomesaAvroFeatureVisibility.TRUE}"
+         |      "${GeoMesaAvroFeatureVisibility.KEY}":"${GeoMesaAvroFeatureVisibility.TRUE}"
          |    }
          |  ]
          |}""".stripMargin
@@ -88,14 +88,14 @@ class ConfluentKafkaDataStoreTest extends Specification {
          |    {
          |      "name":"shape",
          |      "type":"bytes",
-         |      "${GeomesaAvroGeomFormat.KEY}":"${GeomesaAvroGeomFormat.WKB}",
-         |      "${GeomesaAvroGeomType.KEY}":"${GeomesaAvroGeomType.GEOMETRY}",
-         |      "${GeomesaAvroGeomDefault.KEY}":"${GeomesaAvroGeomDefault.TRUE}"
+         |      "${GeoMesaAvroGeomFormat.KEY}":"${GeoMesaAvroGeomFormat.WKB}",
+         |      "${GeoMesaAvroGeomType.KEY}":"${GeoMesaAvroGeomType.GEOMETRY}",
+         |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}"
          |    },
          |    {
          |      "name":"date",
          |      "type":["null","long"],
-         |      "${GeomesaAvroDateFormat.KEY}":"${GeomesaAvroDateFormat.EPOCH_MILLIS}"
+         |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.EPOCH_MILLIS}"
          |    }
          |  ]
          |}""".stripMargin
@@ -111,8 +111,8 @@ class ConfluentKafkaDataStoreTest extends Specification {
           |    {
           |      "name":"f1",
           |      "type":"string",
-          |      "${GeomesaAvroGeomFormat.KEY}":"bad-format",
-          |      "${GeomesaAvroGeomType.KEY}":"bad-type"
+          |      "${GeoMesaAvroGeomFormat.KEY}":"bad-format",
+          |      "${GeoMesaAvroGeomType.KEY}":"bad-type"
           |    }
           |  ]
           |}""".stripMargin
@@ -154,7 +154,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
       private val kds = getStore
       private val fs = kds.getFeatureSource(topic)
 
-      eventually(10, 100.millis) {
+      eventually(20, 100.millis) {
         // the record with "hidden" visibility doesn't appear because no auths are configured
         SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 1
 
@@ -184,7 +184,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val kds = getStore
         private val fs = kds.getFeatureSource(topic)
 
-        eventually(10, 100.millis) {
+        eventually(20, 100.millis) {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 1
 
           val feature = fs.getFeatures.features.next
@@ -201,7 +201,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
 
         producer.send(new ProducerRecord[String, GenericRecord](topic, id, record2)).get
 
-        eventually(10, 100.millis) {
+        eventually(20, 100.millis) {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 1
 
           val feature = fs.getFeatures.features.next
@@ -231,13 +231,13 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val kds = getStore
         private val fs = kds.getFeatureSource(topic)
 
-        eventually(10, 100.millis) {
+        eventually(20, 100.millis) {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 2
         }
 
         producer.send(new ProducerRecord[String, GenericRecord](topic, id1, null)).get
 
-        eventually(10, 100.millis) {
+        eventually(20, 100.millis) {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 1
 
           val feature = fs.getFeatures.features.next
@@ -267,13 +267,13 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val kds = getStore
         private val fs = kds.getFeatureSource(topic)
 
-        eventually(10, 100.millis) {
+        eventually(20, 100.millis) {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 2
         }
 
         producer.send(new ProducerRecord[String, GenericRecord](topic, "", null)).get
 
-        eventually(10, 100.millis) {
+        eventually(20, 100.millis) {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 0
         }
       }
