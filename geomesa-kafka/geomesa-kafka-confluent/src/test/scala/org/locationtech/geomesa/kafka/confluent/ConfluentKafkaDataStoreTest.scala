@@ -16,7 +16,7 @@ import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, Produce
 import org.apache.kafka.common.serialization.StringSerializer
 import org.geotools.data.DataStoreFinder
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeParser.{GeomesaAvroCardinality, GeomesaAvroDateDefault, GeoMesaAvroDateFormat, GeoMesaAvroFeatureVisibility, GeoMesaAvroGeomDefault, GeoMesaAvroGeomFormat, GeomesaAvroGeomSrid, GeoMesaAvroGeomType, GeomesaAvroIndex}
+import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeParser.{GeoMesaAvroDateFormat, GeoMesaAvroExcludeField, GeoMesaAvroGeomDefault, GeoMesaAvroGeomFormat, GeoMesaAvroGeomType, GeoMesaAvroVisibilityField}
 import org.locationtech.geomesa.kafka.data.KafkaDataStore
 import org.locationtech.geomesa.security.SecurityUtils
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
@@ -42,21 +42,19 @@ class ConfluentKafkaDataStoreTest extends Specification {
       s"""{
          |  "type":"record",
          |  "name":"schema1",
-         |  "geomesa.table.compression.enabled":"true",
+         |  "geomesa.index.dtg":"date",
          |  "fields":[
          |    {
          |      "name":"id",
          |      "type":"string",
-         |      "${GeomesaAvroIndex.KEY}":"${GeomesaAvroIndex.FULL}",
-         |      "${GeomesaAvroCardinality.KEY}":"${GeomesaAvroCardinality.HIGH}"
+         |      "cardinality":"high"
          |    },
          |    {
          |      "name":"position",
          |      "type":"string",
          |      "${GeoMesaAvroGeomFormat.KEY}":"${GeoMesaAvroGeomFormat.WKT}",
          |      "${GeoMesaAvroGeomType.KEY}":"${GeoMesaAvroGeomType.POINT}",
-         |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}",
-         |      "${GeomesaAvroGeomSrid.KEY}":"${GeomesaAvroGeomSrid.EPSG_4326}"
+         |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}"
          |    },
          |    {
          |      "name":"speed",
@@ -65,20 +63,19 @@ class ConfluentKafkaDataStoreTest extends Specification {
          |    {
          |      "name":"date",
          |      "type":"string",
-         |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.ISO_INSTANT}",
-         |      "${GeomesaAvroDateDefault.KEY}":"${GeomesaAvroDateDefault.TRUE}"
+         |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.ISO_INSTANT}"
          |    },
          |    {
          |      "name":"visibility",
          |      "type":"string",
-         |      "${GeoMesaAvroFeatureVisibility.KEY}":"${GeoMesaAvroFeatureVisibility.TRUE}"
+         |      "${GeoMesaAvroVisibilityField.KEY}":"${GeoMesaAvroVisibilityField.TRUE}",
+         |      "${GeoMesaAvroExcludeField.KEY}":"${GeoMesaAvroExcludeField.TRUE}"
          |    }
          |  ]
          |}""".stripMargin
     val schema1 = new Schema.Parser().parse(schemaJson1)
-    val encodedSft1 = s"id:String:cardinality=high:index=full,*position:Point:srid=4326,speed:Double,date:Date," +
-      s"visibility:String;geomesa.index.dtg='date',geomesa.kafka.topic='$topic'," +
-      s"geomesa.table.compression.enabled='true',geomesa.avro.visibility.field='visibility'"
+    val encodedSft1 = s"id:String:cardinality=high,*position:Point,speed:Double,date:Date;geomesa.index.dtg='date'," +
+      s"geomesa.kafka.topic='confluent-kds-test',geomesa.visibility.field='visibility'"
 
     val schemaJson2 =
       s"""{
@@ -205,6 +202,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 1
 
           val feature = fs.getFeatures.features.next
+          SimpleFeatureTypes.encodeType(feature.getType, includeUserData = true) mustEqual encodedSft2
           feature.getID mustEqual id
           feature.getAttribute("shape") mustEqual expectedGeom2
           feature.getAttribute("date") mustEqual null
@@ -241,6 +239,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
           SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 1
 
           val feature = fs.getFeatures.features.next
+          SimpleFeatureTypes.encodeType(feature.getType, includeUserData = true) mustEqual encodedSft2
           feature.getID mustEqual id2
           feature.getAttribute("shape") mustEqual expectedGeom2
           feature.getAttribute("date") mustEqual new Date(1639145515643L)

@@ -8,11 +8,10 @@
 
 package org.locationtech.geomesa.features.avro
 
-import org.apache.avro.{JsonProperties, Schema}
+import org.apache.avro.Schema
 import org.apache.avro.generic.GenericRecord
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.joda.time.format.ISODateTimeFormat
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.text.{WKBUtils, WKTUtils}
 import org.locationtech.jts.geom.{Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon}
 import org.opengis.feature.simple.SimpleFeatureType
@@ -22,6 +21,7 @@ import java.util.{Date, Locale}
 import scala.annotation.tailrec
 import scala.collection.JavaConversions._
 import scala.reflect.{ClassTag, classTag}
+import scala.util.control.NonFatal
 
 object AvroSimpleFeatureTypeParser {
   val reservedPropertyKeys: Set[String] = Set(
@@ -40,47 +40,52 @@ object AvroSimpleFeatureTypeParser {
     val builder = new SimpleFeatureTypeBuilder
     builder.setName(schema.getName)
 
-    // any additional top-level props on the schema go in the sft user data
-    val userData = schema.getProps
+    // any extra props on the schema go in the SFT user data
+    val sftUserData = schema.getProps
+
+    var defaultGeomField: Option[String] = None
+    var visibilityField: Option[String] = None
 
     schema.getFields.foreach { field =>
-      val fieldName = field.name()
+      val fieldName = field.name
       val metadata = parseMetadata(field)
 
-      var defaultGeomField: Option[String] = None
-
-      if (!metadata.exclude) {
-        metadata.field match {
-          case GeometryField(_, geomType, default) =>
-            builder.add(fieldName, geomType)
-            if (default) {
-              defaultGeomField.foreach { name =>
-                throw new IllegalArgumentException(s"There may be only one default geometry: field '$name' was already " +
-                  s"declared as the default")
-              }
-              builder.setDefaultGeometry(fieldName)
-              defaultGeomField = Some(fieldName)
+      metadata.field match {
+        case GeometryField(_, geomType, default) if !metadata.exclude =>
+          builder.add(fieldName, geomType)
+          if (default) {
+            defaultGeomField.foreach { name =>
+              throw new IllegalArgumentException(s"There may be only one default geometry field: " +
+                s"'$name' was already declared as the default")
             }
+            builder.setDefaultGeometry(fieldName)
+            defaultGeomField = Some(fieldName)
+          }
 
-          case DateField(_) =>
-            builder.add(fieldName, classOf[Date])
+        case DateField(_) if !metadata.exclude =>
+          builder.add(fieldName, classOf[Date])
 
-          case StandardField =>
+        case VisibilityField =>
+          if (!metadata.exclude) {
             addFieldToBuilder(builder, field)
-        }
+          }
+          visibilityField.foreach { name =>
+            throw new IllegalArgumentException(s"There may be only one visibility field: " +
+              s"'$name' was already declared as the visibility")
+          }
+          sftUserData.put(GeoMesaAvroVisibilityField.KEY, fieldName)
+          visibilityField = Some(fieldName)
 
-        userData.put(GeoMesaAvroVisibilityField.KEY, fieldName)
+        case StandardField if !metadata.exclude =>
+          addFieldToBuilder(builder, field)
       }
 
-      GeoMesaAvroVisibilityField.parse
-
-
       // any extra props on the field go in the attribute user data
-      builder.get(fieldName).getUserData.putAll(metadata.extraProps)
+      Option(builder.get(fieldName)).map(_.getUserData.putAll(metadata.extraProps))
     }
 
     val sft = builder.buildFeatureType()
-    sft.getUserData.putAll(userData)
+    sft.getUserData.putAll(sftUserData)
     sft
   }
 
@@ -88,26 +93,26 @@ object AvroSimpleFeatureTypeParser {
   private def addFieldToBuilder(builder: SimpleFeatureTypeBuilder,
                                 field: Schema.Field,
                                 typeOverride: Option[Schema.Type] = None): Unit = {
-    typeOverride.getOrElse(field.schema().getType) match {
-      case Schema.Type.STRING  => builder.add(field.name(), classOf[java.lang.String])
-      case Schema.Type.BOOLEAN => builder.add(field.name(), classOf[java.lang.Boolean])
-      case Schema.Type.INT     => builder.add(field.name(), classOf[java.lang.Integer])
-      case Schema.Type.DOUBLE  => builder.add(field.name(), classOf[java.lang.Double])
-      case Schema.Type.LONG    => builder.add(field.name(), classOf[java.lang.Long])
-      case Schema.Type.FLOAT   => builder.add(field.name(), classOf[java.lang.Float])
-      //how to support bytes type for non geometry fields?
-      case Schema.Type.BYTES   => builder.add(field.name(), classOf[Array[Byte]])
+    typeOverride.getOrElse(field.schema.getType) match {
+      case Schema.Type.STRING  => builder.add(field.name, classOf[java.lang.String])
+      case Schema.Type.BOOLEAN => builder.add(field.name, classOf[java.lang.Boolean])
+      case Schema.Type.INT     => builder.add(field.name, classOf[java.lang.Integer])
+      case Schema.Type.DOUBLE  => builder.add(field.name, classOf[java.lang.Double])
+      case Schema.Type.LONG    => builder.add(field.name, classOf[java.lang.Long])
+      case Schema.Type.FLOAT   => builder.add(field.name, classOf[java.lang.Float])
+      case Schema.Type.BYTES   => builder.add(field.name, classOf[Array[Byte]])
       case Schema.Type.UNION   =>
         // if a union has more than one non-null type, it is not supported
-        val types = field.schema().getTypes.map(_.getType).filter(_ != Schema.Type.NULL).toSet
+        val types = field.schema.getTypes.map(_.getType).filter(_ != Schema.Type.NULL).toSet
         if (types.size != 1) {
           throw UnsupportedAvroTypeException(types.mkString("[", ", ", "]"))
         } else {
           addFieldToBuilder(builder, field, Option(types.head))
+          builder.get("hi").
         }
       case Schema.Type.MAP     => throw UnsupportedAvroTypeException(Schema.Type.MAP.getName)
       case Schema.Type.RECORD  => throw UnsupportedAvroTypeException(Schema.Type.RECORD.getName)
-      case Schema.Type.ENUM    => builder.add(field.name(), classOf[java.lang.String])
+      case Schema.Type.ENUM    => builder.add(field.name, classOf[java.lang.String])
       case Schema.Type.ARRAY   => throw UnsupportedAvroTypeException(Schema.Type.ARRAY.getName)
       case Schema.Type.FIXED   => throw UnsupportedAvroTypeException(Schema.Type.FIXED.getName)
       case Schema.Type.NULL    => throw UnsupportedAvroTypeException(Schema.Type.NULL.getName)
@@ -116,7 +121,7 @@ object AvroSimpleFeatureTypeParser {
   }
 
   private def parseMetadata(field: Schema.Field): GeoMesaAvroMetadata = {
-
+    // any field properties that are not one of the defined geomesa avro properties will go in the attribute user data
     val extraProps = field.getProps.filterNot {
       case (key, _) => reservedPropertyKeys.contains(key)
     }.toMap
@@ -137,6 +142,12 @@ object AvroSimpleFeatureTypeParser {
       return GeoMesaAvroMetadata(DateField(dateFormat.get), extraProps, exclude)
     }
 
+    val visibility = GeoMesaAvroVisibilityField.parse(field).getOrElse(false)
+
+    if (visibility) {
+      return GeoMesaAvroMetadata(VisibilityField, extraProps, exclude)
+    }
+
     GeoMesaAvroMetadata(StandardField, extraProps, exclude)
   }
 
@@ -145,76 +156,76 @@ object AvroSimpleFeatureTypeParser {
   private sealed trait GeoMesaAvroField
   private case class GeometryField(format: String, typ: Class[_ <: Geometry], default: Boolean) extends GeoMesaAvroField
   private case class DateField(format: String) extends GeoMesaAvroField
+  private case object VisibilityField extends GeoMesaAvroField
   private case object StandardField extends GeoMesaAvroField
 
   case class UnsupportedAvroTypeException(typeName: String)
     extends IllegalArgumentException(s"Type '$typeName' is not supported for SFT conversion")
 
   /**
-   * An attribute in an Avro [[Schema]] to provide additional information when creating an SFT.
+   * A property in an Avro [[Schema.Field]] to provide additional information when generating a [[SimpleFeatureType]].
    *
-   * @tparam K the type of properties to which this property applies
    * @tparam T the type of the value to be parsed from this property
    */
-  trait GeomesaAvroProperty[K <: JsonProperties, T] {
+  trait GeoMesaAvroProperty[T] {
     /**
-     * The key in the properties for this attribute.
+     * The key in the [[Schema.Field]] for this property.
      */
     val KEY: String
 
     /**
-     * Parse the value from the properties at this property's `key`.
+     * Parse the value from the [[Schema.Field]] properties at this property's `KEY`.
      *
-     * @return `None` if the `key` does not exist, else the value at the `key`
+     * @return `None` if the `KEY` does not exist, else the value at the `KEY`
      */
-    def parse(properties: K): Option[T]
+    def parse(field: Schema.Field): Option[T]
 
-    protected final def assertFieldType(schema: Schema, typ: Schema.Type): Unit = {
-      schema.getType match {
+    protected final def assertFieldType(field: Schema.Field, typ: Schema.Type): Unit = {
+      field.schema.getType match {
         case Schema.Type.UNION =>
           // if a union has more than one non-null type, it should not be converted to an SFT
-          val unionTypes = schema.getTypes.map(_.getType).filter(_ != Schema.Type.NULL).toSet
+          val unionTypes = field.schema.getTypes.map(_.getType).filter(_ != Schema.Type.NULL).toSet
           if (unionTypes.size != 1 || typ != unionTypes.head) {
-            throw GeomesaAvroProperty.InvalidPropertyTypeException(typ.getName, KEY)
+            throw GeoMesaAvroProperty.InvalidPropertyTypeException(typ.getName, KEY)
           }
         case fieldType: Schema.Type =>
           if (typ != fieldType) {
-            throw GeomesaAvroProperty.InvalidPropertyTypeException(typ.getName, KEY)
+            throw GeoMesaAvroProperty.InvalidPropertyTypeException(typ.getName, KEY)
           }
       }
     }
   }
 
-  object GeomesaAvroProperty {
+  object GeoMesaAvroProperty {
     final case class InvalidPropertyValueException(value: String, key: String)
       extends IllegalArgumentException(s"Unable to parse value '$value' for property '$key'")
 
     final case class InvalidPropertyTypeException(typeName: String, key: String)
-      extends IllegalArgumentException(s"Schemas with property '$key' must have type '$typeName'")
+      extends IllegalArgumentException(s"Fields with property '$key' must have type '$typeName'")
   }
 
   /**
-   * A [[GeomesaAvroProperty]] that has a finite set of possible string values.
+   * A [[GeoMesaAvroProperty]] that has a finite set of possible string values.
    *
    * @tparam T the type of the value to be parsed from this property
    */
-  trait GeomesaAvroEnumProperty[T] extends GeomesaAvroProperty[T] {
+  trait GeoMesaAvroEnumProperty[T] extends GeoMesaAvroProperty[T] {
     // case clauses to match the values of the enum and possibly check the field type
     protected val matcher: PartialFunction[(String, Schema.Field), T]
 
-    override final def parse(schema: Schema): Option[T] = {
-      Option(schema.getProp(KEY)).map(_.toLowerCase(Locale.ENGLISH)).map { value =>
+    override final def parse(field: Schema.Field): Option[T] = {
+      Option(field.getProp(KEY)).map(_.toLowerCase(Locale.ENGLISH)).map { value =>
         matcher.lift.apply((value, field)).getOrElse {
-          throw GeomesaAvroProperty.InvalidPropertyValueException(value, KEY)
+          throw GeoMesaAvroProperty.InvalidPropertyValueException(value, KEY)
         }
       }
     }
   }
 
   /**
-   * A [[GeomesaAvroEnumProperty]] that parses to a boolean value.
+   * A [[GeoMesaAvroEnumProperty]] that parses to a boolean value.
    */
-  trait GeomesaAvroBooleanProperty extends GeomesaAvroEnumProperty[Boolean] {
+  trait GeoMesaAvroBooleanProperty extends GeoMesaAvroEnumProperty[Boolean] {
     final val TRUE: String = "true"
     final val FALSE: String = "false"
 
@@ -225,12 +236,12 @@ object AvroSimpleFeatureTypeParser {
   }
 
   /**
-   * A [[GeomesaAvroEnumProperty]] that can be deserialized from a avro record.
+   * A [[GeoMesaAvroEnumProperty]] with a value that can be deserialized from an Avro [[GenericRecord]].
    *
    * @tparam T the type of the value to be parsed from this property
    * @tparam K the type of the value to be deserialized from this property
    */
-  abstract class GeomesaAvroDeserializableEnumProperty[T, K >: Null: ClassTag] extends GeomesaAvroEnumProperty[T] {
+  abstract class GeoMesaAvroDeserializableEnumProperty[T, K >: Null: ClassTag] extends GeoMesaAvroEnumProperty[T] {
     // case clauses to match the values of the enum and deserialize the data accordingly
     protected val dematcher: PartialFunction[(T, AnyRef), K]
 
@@ -240,18 +251,18 @@ object AvroSimpleFeatureTypeParser {
       try {
         parse(record.getSchema.getField(fieldName)).map { value =>
           dematcher.lift.apply((value, data)).getOrElse {
-            throw GeomesaAvroProperty.InvalidPropertyValueException(value.toString, KEY)
+            throw GeoMesaAvroProperty.InvalidPropertyValueException(value.toString, KEY)
           }
         }.getOrElse {
-          throw GeomesaAvroDeserializableEnumProperty.MissingPropertyValueException[K](fieldName, KEY)
+          throw GeoMesaAvroDeserializableEnumProperty.MissingPropertyValueException[K](fieldName, KEY)
         }
       } catch {
-        case ex: Exception => throw GeomesaAvroDeserializableEnumProperty.DeserializationException[K](fieldName, ex)
+        case NonFatal(ex) => throw GeoMesaAvroDeserializableEnumProperty.DeserializationException[K](fieldName, ex)
       }
     }
   }
 
-  object GeomesaAvroDeserializableEnumProperty {
+  object GeoMesaAvroDeserializableEnumProperty {
     final case class MissingPropertyValueException[K: ClassTag](fieldName: String, key: String)
       extends RuntimeException(s"Cannot process field '$fieldName' for type '${classTag[K].runtimeClass.getName}' " +
         s"because key '$key' is missing")
@@ -262,9 +273,10 @@ object AvroSimpleFeatureTypeParser {
   }
 
   /**
-   * Indicates that this field should be interpreted as a [[Geometry]], with one of the formats specified below.
+   * Indicates that this field should be interpreted as a [[Geometry]] with the given format. This property must be
+   * accompanied by the [[GeoMesaAvroGeomType]] property.
    */
-  object GeoMesaAvroGeomFormat extends GeomesaAvroDeserializableEnumProperty[String, Geometry] {
+  object GeoMesaAvroGeomFormat extends GeoMesaAvroDeserializableEnumProperty[String, Geometry] {
     override val KEY: String = "geomesa.geom.format"
 
     /**
@@ -288,9 +300,10 @@ object AvroSimpleFeatureTypeParser {
   }
 
   /**
-   * Indicates that this field represents a [[Geometry]], with one of the types specified below.
+   * Indicates that this field represents a [[Geometry]] with the given type. This property must be accompanied
+   * by the [[GeoMesaAvroGeomFormat]] property.
    */
-  object GeoMesaAvroGeomType extends GeomesaAvroEnumProperty[Class[_ <: Geometry]] {
+  object GeoMesaAvroGeomType extends GeoMesaAvroEnumProperty[Class[_ <: Geometry]] {
     override val KEY: String = "geomesa.geom.type"
 
     /**
@@ -339,16 +352,18 @@ object AvroSimpleFeatureTypeParser {
   }
 
   /**
-   * Indicates that this field should be interpreted as the default [[Geometry]] for this [[SimpleFeatureType]].
+   * Indicates that this field is the default [[Geometry]] for this [[SimpleFeatureType]]. This property must be
+   * accompanied by the [[GeoMesaAvroGeomFormat]] and [[GeoMesaAvroGeomType]] properties, and there may only be one
+   * of these properties for a given schema.
    */
-  object GeoMesaAvroGeomDefault extends GeomesaAvroBooleanProperty {
+  object GeoMesaAvroGeomDefault extends GeoMesaAvroBooleanProperty {
     override val KEY: String = "geomesa.geom.default"
   }
 
   /**
-   * Indicates that the field should be interpreted as a [[Date]], with one of the formats specified below.
+   * Indicates that the field should be interpreted as a [[Date]] in the given format.
    */
-  object GeoMesaAvroDateFormat extends GeomesaAvroDeserializableEnumProperty[String, Date] {
+  object GeoMesaAvroDateFormat extends GeoMesaAvroDeserializableEnumProperty[String, Date] {
     override val KEY: String = "geomesa.date.format"
 
     /**
@@ -396,22 +411,22 @@ object AvroSimpleFeatureTypeParser {
   }
 
   /**
-   * Specifies the name of the avro field to be as the visibility for features of this [[SimpleFeatureType]].
+   * Specifies that the value of this field should be used as the visibility for features of this [[SimpleFeatureType]].
+   * There may only be one of these properties for a given schema.
    */
-  object GeoMesaAvroVisibilityField extends GeomesaAvroProperty[String] {
+  object GeoMesaAvroVisibilityField extends GeoMesaAvroBooleanProperty {
     override val KEY: String = "geomesa.visibility.field"
 
-    override def parse(field: Schema.Field): Option[String] = {
-      Option(field.getProp(KEY)).map {
-        name => assertFieldType(field, Schema.Type.STRING); name
-      }
+    override protected val matcher: PartialFunction[(String, Schema.Field), Boolean] = {
+      case (TRUE, field) => assertFieldType(field, Schema.Type.STRING); true
+      case (FALSE, field) => assertFieldType(field, Schema.Type.STRING); false
     }
   }
 
   /**
-   * Specifies whether this field should be included in the [[SimpleFeatureType]].
+   * Specifies whether this field should be excluded from the [[SimpleFeatureType]].
    */
-  object GeoMesaAvroExcludeField extends GeomesaAvroBooleanProperty {
+  object GeoMesaAvroExcludeField extends GeoMesaAvroBooleanProperty {
     override val KEY: String = "geomesa.exclude.field"
   }
 }
