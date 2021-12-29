@@ -298,9 +298,10 @@ class KafkaDataStore(
     val producer = getTransactionalProducer(transaction)
     val writer =
       if (sft.isVisibilityRequired) {
-        new ModifyKafkaFeatureWriter(sft, producer, config.serialization, filter) with RequiredVisibilityWriter
+        new ModifyKafkaFeatureWriter(sft, producer, serialization.apply(sft, config.serialization), filter)
+          with RequiredVisibilityWriter
       } else {
-        new ModifyKafkaFeatureWriter(sft, producer, config.serialization, filter)
+        new ModifyKafkaFeatureWriter(sft, producer, serialization.apply(sft, config.serialization), filter)
       }
     if (config.clearOnStart && cleared.add(typeName)) {
       writer.clear()
@@ -318,9 +319,9 @@ class KafkaDataStore(
     val producer = getTransactionalProducer(transaction)
     val writer =
       if (sft.isVisibilityRequired) {
-        new AppendKafkaFeatureWriter(sft, producer, config.serialization) with RequiredVisibilityWriter
+        new AppendKafkaFeatureWriter(sft, producer, serialization.apply(sft, config.serialization)) with RequiredVisibilityWriter
       } else {
-        new AppendKafkaFeatureWriter(sft, producer, config.serialization)
+        new AppendKafkaFeatureWriter(sft, producer, serialization.apply(sft, config.serialization))
       }
     if (config.clearOnStart && cleared.add(typeName)) {
       writer.clear()

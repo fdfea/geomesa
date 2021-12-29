@@ -91,6 +91,7 @@ object SimpleFeatureTypes {
     val OptIndex        = "index"
     val OptIndexValue   = "index-value"
     val OptJson         = "json"
+    val OptNullable     = "nullable"
     val OptPrecision    = "precision"
     val OptSrid         = "srid"
     val OptStats        = "keep-stats"

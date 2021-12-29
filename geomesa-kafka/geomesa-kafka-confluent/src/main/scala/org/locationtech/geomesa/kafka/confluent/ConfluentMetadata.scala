@@ -8,21 +8,20 @@
 
 package org.locationtech.geomesa.kafka.confluent
 
-import java.util.concurrent.TimeUnit
 import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine, LoadingCache}
 import com.typesafe.scalalogging.LazyLogging
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient
-import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeParser
+import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeUtils
 import org.locationtech.geomesa.index.metadata.GeoMesaMetadata
+import org.locationtech.geomesa.kafka.confluent.ConfluentMetadata._
 import org.locationtech.geomesa.kafka.data.KafkaDataStore
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 
+import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient) extends GeoMesaMetadata[String] with LazyLogging {
-
-  import ConfluentMetadata.{SubjectPostfix, SchemaIdKey}
 
   private val topicSftCache: LoadingCache[String, String] = {
     Caffeine.newBuilder().expireAfterWrite(10, TimeUnit.MINUTES).build(
@@ -31,8 +30,8 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient) extends GeoMes
           try {
             val subject = topic + SubjectPostfix
             val schemaId = schemaRegistry.getLatestSchemaMetadata(subject).getId
-            val sft = AvroSimpleFeatureTypeParser.schemaToSft(schemaRegistry.getById(schemaId))
-            //store the schema id to access the schema when creating the feature serializer
+            val sft = AvroSimpleFeatureTypeUtils.schemaToSft(schemaRegistry.getById(schemaId))
+
             sft.getUserData.put(SchemaIdKey, schemaId.toString)
             KafkaDataStore.setTopic(sft, topic)
             SimpleFeatureTypes.encodeType(sft, includeUserData = true)
@@ -92,5 +91,5 @@ object ConfluentMetadata {
   val SubjectPostfix = "-value"
 
   // key in user data where avro schema id is stored
-  val SchemaIdKey = "geomesa.avro.schema.id"
+  val SchemaIdKey = "geomesa.confluent.schema.id"
 }

@@ -8,15 +8,19 @@
 
 package org.locationtech.geomesa.kafka.confluent
 
-import java.util.{Date, Properties}
-import io.confluent.kafka.serializers.KafkaAvroSerializer
+import io.confluent.kafka.serializers.{KafkaAvroDeserializer, KafkaAvroSerializer}
 import org.apache.avro.Schema
 import org.apache.avro.generic.{GenericData, GenericRecord}
+import org.apache.kafka.clients.consumer.ConsumerConfig.{BOOTSTRAP_SERVERS_CONFIG, KEY_DESERIALIZER_CLASS_CONFIG, VALUE_DESERIALIZER_CLASS_CONFIG}
+import org.apache.kafka.clients.consumer.internals.NoOpConsumerRebalanceListener
+import org.apache.kafka.clients.consumer.{Consumer, KafkaConsumer}
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
-import org.apache.kafka.common.serialization.StringSerializer
+import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
 import org.geotools.data.DataStoreFinder
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeParser.{GeoMesaAvroDateFormat, GeoMesaAvroExcludeField, GeoMesaAvroGeomDefault, GeoMesaAvroGeomFormat, GeoMesaAvroGeomType, GeoMesaAvroVisibilityField}
+import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeUtils._
+import org.locationtech.geomesa.kafka.KafkaConsumerVersions
+import org.locationtech.geomesa.kafka.confluent.ConfluentKafkaDataStoreTest._
 import org.locationtech.geomesa.kafka.data.KafkaDataStore
 import org.locationtech.geomesa.security.SecurityUtils
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
@@ -27,6 +31,7 @@ import org.specs2.mutable.{After, Specification}
 import org.specs2.runner.JUnitRunner
 
 import java.nio.ByteBuffer
+import java.util.{Date, Properties}
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
 
@@ -35,89 +40,11 @@ class ConfluentKafkaDataStoreTest extends Specification {
   sequential
 
   "ConfluentKafkaDataStore" should {
-
-    val topic = "confluent-kds-test"
-
-    val schemaJson1 =
-      s"""{
-         |  "type":"record",
-         |  "name":"schema1",
-         |  "geomesa.index.dtg":"date",
-         |  "fields":[
-         |    {
-         |      "name":"id",
-         |      "type":"string",
-         |      "cardinality":"high"
-         |    },
-         |    {
-         |      "name":"position",
-         |      "type":"string",
-         |      "${GeoMesaAvroGeomFormat.KEY}":"${GeoMesaAvroGeomFormat.WKT}",
-         |      "${GeoMesaAvroGeomType.KEY}":"${GeoMesaAvroGeomType.POINT}",
-         |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}"
-         |    },
-         |    {
-         |      "name":"speed",
-         |      "type":"double"
-         |    },
-         |    {
-         |      "name":"date",
-         |      "type":"string",
-         |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.ISO_DATETIME}"
-         |    },
-         |    {
-         |      "name":"visibility",
-         |      "type":"string",
-         |      "${GeoMesaAvroVisibilityField.KEY}":"${GeoMesaAvroVisibilityField.TRUE}",
-         |      "${GeoMesaAvroExcludeField.KEY}":"${GeoMesaAvroExcludeField.TRUE}"
-         |    }
-         |  ]
-         |}""".stripMargin
-    val schema1 = new Schema.Parser().parse(schemaJson1)
-    val encodedSft1 = s"id:String:cardinality=high,*position:Point,speed:Double,date:Date"
-
-    val schemaJson2 =
-      s"""{
-         |  "type":"record",
-         |  "name":"schema2",
-         |  "fields":[
-         |    {
-         |      "name":"shape",
-         |      "type":"bytes",
-         |      "${GeoMesaAvroGeomFormat.KEY}":"${GeoMesaAvroGeomFormat.WKB}",
-         |      "${GeoMesaAvroGeomType.KEY}":"${GeoMesaAvroGeomType.GEOMETRY}",
-         |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}"
-         |    },
-         |    {
-         |      "name":"date",
-         |      "type":["null","long"],
-         |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.EPOCH_MILLIS}"
-         |    }
-         |  ]
-         |}""".stripMargin
-    val schema2 = new Schema.Parser().parse(schemaJson2)
-    val encodedSft2 = s"*shape:Geometry,date:Date"
-
     "fail to get a feature source when the schema cannot be converted to an SFT" in new ConfluentKafkaTestContext {
-      private val badSchemaJson =
-        s"""{
-          |  "type":"record",
-          |  "name":"schema",
-          |  "fields":[
-          |    {
-          |      "name":"f1",
-          |      "type":"string",
-          |      "${GeoMesaAvroGeomFormat.KEY}":"bad-format",
-          |      "${GeoMesaAvroGeomType.KEY}":"bad-type"
-          |    }
-          |  ]
-          |}""".stripMargin
-      private val badSchema = new Schema.Parser().parse(badSchemaJson)
-
       private val record = new GenericData.Record(badSchema)
-      record.put("f1", "POINT(10 20)")
+      record.put("f1", "POINT (10 20)")
 
-      private val producer = getProducer
+      private val producer = getProducer()
       producer.send(new ProducerRecord[String, GenericRecord](topic, null, record)).get
 
       private val kds = getStore
@@ -126,11 +53,15 @@ class ConfluentKafkaDataStoreTest extends Specification {
       kds.getFeatureSource(topic) must throwAn[Exception]
     }
 
-    "deserialize simple features when the schema and records are valid" in new ConfluentKafkaTestContext {
+    "fail to get a feature writer when the SFT cannot be converted to a schema" in new ConfluentKafkaTestContext {
+      ok
+    }
+
+    "read simple features from avro when the schema and records are valid" in new ConfluentKafkaTestContext {
       private val id1 = "1"
-      private val record1 = new GenericData.Record(schema1)
+      private val record1: GenericData.Record = new GenericData.Record(schema1)
       record1.put("id", id1)
-      record1.put("position", "POINT(10 20)")
+      record1.put("position", "POINT (10 20)")
       record1.put("speed", 12.325d)
       record1.put("date", "2021-12-07T17:22:24.897-05:00")
       record1.put("visibility", "")
@@ -138,12 +69,43 @@ class ConfluentKafkaDataStoreTest extends Specification {
       private val id2 = "2"
       private val record2 = new GenericData.Record(schema1)
       record2.put("id", id1)
-      record2.put("position", "POINT(15 35)")
+      record2.put("position", "POINT (15 35)")
       record2.put("speed", 0.00d)
       record2.put("date", "2021-12-07T17:23:25.372-05:00")
       record2.put("visibility", "hidden")
 
-      private val producer = getProducer
+      /*
+      val consumer: Consumer[String, GenericRecord] = getConsumer()
+
+      def runnable: Runnable = new Runnable {
+        override def run(): Unit = {
+          val frequency = java.time.Duration.ofMillis(100)
+          try {
+            var interrupted = false
+            while (!interrupted) {
+              try {
+                val result: ConsumerRecords[String, GenericRecord] = KafkaConsumerVersions.poll(consumer, frequency)
+                import scala.collection.JavaConversions._
+                result.iterator().foreach { cr =>
+                  val key = cr.key()
+                  val value = cr.value()
+                  println(s"Key: $key value: $value")
+                }
+              } catch {
+                case t: Throwable =>
+                  t.printStackTrace()
+                  interrupted = true
+              }
+            }
+          }
+        }
+      }
+
+      private val es = Executors.newFixedThreadPool(1)
+      es.execute(runnable)
+       */
+
+      private val producer = getProducer()
       producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
       producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
 
@@ -164,6 +126,24 @@ class ConfluentKafkaDataStoreTest extends Specification {
         feature.getDefaultGeometry mustEqual expectedPosition
         SecurityUtils.getVisibility(feature) mustEqual ""
       }
+
+      /*
+      Thread.sleep(1000)
+
+      private val sft = kds.getSchema(topic)
+      println(s"SFT: $sft")
+
+      private val f2 = ScalaSimpleFeature.create(sft, "7", "id", "POINT (2 2)", 1.234d, "2017-01-01T00:00:02.000Z")
+      println(s"SF: $f2")
+
+      WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
+        FeatureUtils.write(writer, f2, useProvidedFid = true)
+      }
+       */
+    }
+
+    "write simple features to avro where the SFT and features are valid" in new ConfluentKafkaTestContext {
+      ok
     }
 
     "support the GeoMessage control operation for" >> {
@@ -174,7 +154,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record1.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom1)))
         record1.put("date", 1639145281285L)
 
-        private val producer = getProducer
+        private val producer = getProducer()
         producer.send(new ProducerRecord[String, GenericRecord](topic, id, record1)).get
 
         private val kds = getStore
@@ -211,17 +191,17 @@ class ConfluentKafkaDataStoreTest extends Specification {
       "drop" in new ConfluentKafkaTestContext {
         private val id1 = "1"
         private val record1 = new GenericData.Record(schema2)
-        private val expectedGeom1 = generatePolygon(Seq((0d,0d), (10d,0d), (10d,10d), (0d,10d), (0d,0d)))
+        private val expectedGeom1 = generatePolygon(Seq((0d, 0d), (10d, 0d), (10d, 10d), (0d, 10d), (0d, 0d)))
         record1.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom1)))
         record1.put("date", 1639145281285L)
 
         private val id2 = "2"
         private val record2 = new GenericData.Record(schema2)
-        private val expectedGeom2 = generatePolygon(Seq((5d,5d), (15d,5d), (15d,15d), (5d,15d), (5d,5d)))
+        private val expectedGeom2 = generatePolygon(Seq((5d, 5d), (15d, 5d), (15d, 15d), (5d, 15d), (5d, 5d)))
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", 1639145515643L)
 
-        private val producer = getProducer
+        private val producer = getProducer()
         producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
         producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
 
@@ -248,17 +228,17 @@ class ConfluentKafkaDataStoreTest extends Specification {
       "clear" in new ConfluentKafkaTestContext {
         private val id1 = "1"
         private val record1 = new GenericData.Record(schema2)
-        private val expectedGeom1 = generatePolygon(Seq((0d,0d), (10d,0d), (10d,10d), (0d,10d), (0d,0d)))
+        private val expectedGeom1 = generatePolygon(Seq((0d, 0d), (10d, 0d), (10d, 10d), (0d, 10d), (0d, 0d)))
         record1.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom1)))
         record1.put("date", 1639145281285L)
 
         private val id2 = "2"
         private val record2 = new GenericData.Record(schema2)
-        private val expectedGeom2 = generatePolygon(Seq((5d,5d), (15d,5d), (15d,15d), (5d,15d), (5d,5d)))
+        private val expectedGeom2 = generatePolygon(Seq((5d, 5d), (15d, 5d), (15d, 15d), (5d, 15d), (5d, 5d)))
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", 1639145515643L)
 
-        private val producer = getProducer
+        private val producer = getProducer()
         producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
         producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
 
@@ -277,44 +257,144 @@ class ConfluentKafkaDataStoreTest extends Specification {
       }
     }
   }
+}
 
-  private trait ConfluentKafkaTestContext extends After {
+private object ConfluentKafkaDataStoreTest {
 
-    protected val confluentKafka: EmbeddedConfluent = new EmbeddedConfluent()
+  val topic: String = "confluent-kds-test"
 
-    private val geomFactory = new GeometryFactory()
+  val schemaJson1: String =
+    s"""{
+       |  "type":"record",
+       |  "name":"schema1",
+       |  "geomesa.index.dtg":"date",
+       |  "fields":[
+       |    {
+       |      "name":"id",
+       |      "type":"string",
+       |      "cardinality":"high"
+       |    },
+       |    {
+       |      "name":"position",
+       |      "type":"string",
+       |      "${GeoMesaAvroGeomFormat.KEY}":"${GeoMesaAvroGeomFormat.WKT}",
+       |      "${GeoMesaAvroGeomType.KEY}":"${GeoMesaAvroGeomType.POINT}",
+       |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}"
+       |    },
+       |    {
+       |      "name":"speed",
+       |      "type":"double"
+       |    },
+       |    {
+       |      "name":"date",
+       |      "type":"string",
+       |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.ISO_DATETIME}"
+       |    },
+       |    {
+       |      "name":"visibility",
+       |      "type":"string",
+       |      "${GeoMesaAvroVisibilityField.KEY}":"${GeoMesaAvroVisibilityField.TRUE}",
+       |      "${GeoMesaAvroExcludeField.KEY}":"${GeoMesaAvroExcludeField.TRUE}"
+       |    }
+       |  ]
+       |}""".stripMargin
+  val schema1: Schema = new Schema.Parser().parse(schemaJson1)
+  val encodedSft1: String = s"id:String:cardinality=high,*position:Point:geomesa.geom.type=point:" +
+    s"geomesa.geom.default=true:geomesa.geom.format=wkt,speed:Double,date:Date:geomesa.date.format='iso-datetime'"
 
-    override def after: Unit = confluentKafka.close()
+  val schemaJson2: String =
+    s"""{
+       |  "type":"record",
+       |  "name":"schema2",
+       |  "fields":[
+       |    {
+       |      "name":"shape",
+       |      "type":"bytes",
+       |      "${GeoMesaAvroGeomFormat.KEY}":"${GeoMesaAvroGeomFormat.WKB}",
+       |      "${GeoMesaAvroGeomType.KEY}":"${GeoMesaAvroGeomType.GEOMETRY}",
+       |      "${GeoMesaAvroGeomDefault.KEY}":"${GeoMesaAvroGeomDefault.TRUE}"
+       |    },
+       |    {
+       |      "name":"date",
+       |      "type":["null","long"],
+       |      "${GeoMesaAvroDateFormat.KEY}":"${GeoMesaAvroDateFormat.EPOCH_MILLIS}"
+       |    }
+       |  ]
+       |}""".stripMargin
+  val schema2: Schema = new Schema.Parser().parse(schemaJson2)
+  val encodedSft2: String = s"*shape:Geometry:geomesa.geom.type=geometry:geomesa.geom.default=true:" +
+    s"geomesa.geom.format=wkb,date:Date:nullable=true:geomesa.date.format='epoch-millis'"
 
-    protected def getProducer: KafkaProducer[String, GenericRecord] = {
-      val producerProps = new Properties()
-      producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
-      producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, classOf[StringSerializer])
-      producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, classOf[KafkaAvroSerializer])
-      producerProps.put("schema.registry.url", confluentKafka.schemaRegistryUrl)
+  val badSchemaJson: String =
+    s"""{
+       |  "type":"record",
+       |  "name":"schema",
+       |  "fields":[
+       |    {
+       |      "name":"f1",
+       |      "type":"string",
+       |      "${GeoMesaAvroGeomFormat.KEY}":"bad-format",
+       |      "${GeoMesaAvroGeomType.KEY}":"bad-type"
+       |    }
+       |  ]
+       |}""".stripMargin
+  val badSchema: Schema = new Schema.Parser().parse(badSchemaJson)
+}
 
-      new KafkaProducer[String, GenericRecord](producerProps)
-    }
+private trait ConfluentKafkaTestContext extends After {
 
-    protected def getStore: KafkaDataStore = {
-      val params = Map(
-        "kafka.schema.registry.url" -> confluentKafka.schemaRegistryUrl,
-        "kafka.brokers" -> confluentKafka.brokers,
-        "kafka.zookeepers" -> confluentKafka.zookeepers,
-        "kafka.topic.partitions" -> 1,
-        "kafka.topic.replication" -> 1,
-        "kafka.consumer.read-back" -> "Inf",
-        "kafka.zk.path" -> "",
-        "kafka.consumer.count" -> 1
-      )
+  protected val confluentKafka: EmbeddedConfluent = new EmbeddedConfluent()
 
-      DataStoreFinder.getDataStore(params).asInstanceOf[KafkaDataStore]
-    }
+  private val geomFactory = new GeometryFactory()
 
-    protected def generatePoint(x: Double, y: Double): Point = geomFactory.createPoint(new Coordinate(x, y))
+  override def after: Unit = confluentKafka.close()
 
-    protected def generatePolygon(points: Seq[(Double, Double)]): Polygon = {
-      geomFactory.createPolygon(points.map(point => new Coordinate(point._1, point._2)).toArray)
-    }
+  protected def getProducer(extraProps: Map[String, String] = Map.empty): KafkaProducer[String, GenericRecord] = {
+    val props = new Properties()
+    props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
+    props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, classOf[StringSerializer])
+    props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, classOf[KafkaAvroSerializer])
+    props.put("schema.registry.url", confluentKafka.schemaRegistryUrl)
+    extraProps.foreach { case (k, v) => props.put(k, v) }
+
+    new KafkaProducer[String, GenericRecord](props)
+  }
+
+  protected def getConsumer(extraProps: Map[String, String] = Map.empty): Consumer[String, GenericRecord] = {
+    val props = new Properties()
+    props.put(BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
+    props.put(KEY_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
+    props.put(VALUE_DESERIALIZER_CLASS_CONFIG, classOf[KafkaAvroDeserializer].getName)
+    props.put("schema.registry.url", confluentKafka.schemaRegistryUrl)
+    props.put("group.id", "test")
+    extraProps.foreach { case (k, v) => props.put(k, v) }
+
+    val consumer = new KafkaConsumer[String, GenericRecord](props)
+    val listener = new NoOpConsumerRebalanceListener()
+    KafkaConsumerVersions.subscribe(consumer, topic, listener)
+
+    consumer
+  }
+
+  protected def getStore: KafkaDataStore = {
+    val params = Map(
+      "kafka.schema.registry.url" -> confluentKafka.schemaRegistryUrl,
+      "kafka.brokers" -> confluentKafka.brokers,
+      "kafka.zookeepers" -> confluentKafka.zookeepers,
+      "kafka.topic.partitions" -> 1,
+      "kafka.topic.replication" -> 1,
+      "kafka.consumer.read-back" -> "Inf",
+      "kafka.zk.path" -> "",
+      "kafka.consumer.count" -> 1,
+      "kafka.serialization.type" -> "avro"
+    )
+
+    DataStoreFinder.getDataStore(params).asInstanceOf[KafkaDataStore]
+  }
+
+  protected def generatePoint(x: Double, y: Double): Point = geomFactory.createPoint(new Coordinate(x, y))
+
+  protected def generatePolygon(points: Seq[(Double, Double)]): Polygon = {
+    geomFactory.createPolygon(points.map(point => new Coordinate(point._1, point._2)).toArray)
   }
 }
