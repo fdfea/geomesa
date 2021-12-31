@@ -21,7 +21,7 @@ import org.opengis.feature.simple.SimpleFeatureType
 import java.nio.ByteBuffer
 import java.util.{Date, Locale}
 import scala.annotation.tailrec
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 import scala.util.Try
 
 object AvroSimpleFeatureTypeUtils {
@@ -38,14 +38,14 @@ object AvroSimpleFeatureTypeUtils {
     builder.setName(schema.getName)
 
     // any extra props on the schema go in the SFT user data
-    val sftUserData = schema.getProps.filterNot {
+    val sftUserData = schema.getProps.asScala.filterNot {
       case (key, _) => reservedAvroProperties.contains(key)
     }
 
     var defaultGeomField: Option[String] = None
     var visibilityField: Option[String] = None
 
-    schema.getFields.foreach { field =>
+    schema.getFields.asScala.foreach { field =>
       val fieldName = field.name
       val metadata = parseMetadata(field)
       val nullable = isFieldNullable(field)
@@ -84,7 +84,7 @@ object AvroSimpleFeatureTypeUtils {
 
       if (!metadata.exclude) {
         // any props on the schema field go in the attribute user data
-        builder.get(fieldName).getUserData.putAll(metadata.extraProps)
+        builder.get(fieldName).getUserData.putAll(metadata.extraProps.asJava)
 
         if (nullable) {
           builder.get(fieldName).getUserData.put(SimpleFeatureTypes.AttributeOptions.OptNullable, nullable.toString)
@@ -93,7 +93,7 @@ object AvroSimpleFeatureTypeUtils {
     }
 
     val sft = builder.buildFeatureType()
-    sft.getUserData.putAll(sftUserData)
+    sft.getUserData.putAll(sftUserData.asJava)
     sft
   }
 
@@ -105,14 +105,14 @@ object AvroSimpleFeatureTypeUtils {
     val recordBuilder = SchemaBuilder.record(sft.getTypeName)
 
     // set user data on the sft as props on the schema
-    sft.getUserData.foreach {
+    sft.getUserData.asScala.foreach {
       case (key: String, value: String) => recordBuilder.prop(key, value)
       case _ =>
     }
 
     val fieldAssembler = recordBuilder.fields()
 
-    sft.getAttributeDescriptors.foreach(addFieldToSchema(fieldAssembler, _))
+    sft.getAttributeDescriptors.asScala.foreach(addFieldToSchema(fieldAssembler, _))
 
     fieldAssembler.endRecord()
   }
@@ -131,7 +131,7 @@ object AvroSimpleFeatureTypeUtils {
       case Schema.Type.BYTES   => builder.add(field.name, classOf[Array[Byte]])
       case Schema.Type.UNION   =>
         // if a union has more than one non-null type, it is not supported
-        val types = field.schema.getTypes.map(_.getType).filter(_ != Schema.Type.NULL).toSet
+        val types = field.schema.getTypes.asScala.map(_.getType).filter(_ != Schema.Type.NULL).toSet
         if (types.size != 1) {
           throw UnsupportedSchemaTypeException(field.name, types.mkString("[", ", ", "]"))
         } else {
@@ -152,7 +152,7 @@ object AvroSimpleFeatureTypeUtils {
     val fieldName = descriptor.getLocalName
     val fieldBuilder = fieldAssembler.name(fieldName)
 
-    val userData = descriptor.getUserData.flatMap {
+    val userData = descriptor.getUserData.asScala.flatMap {
       case (key: String, value: String) => Some(key -> value)
       case _ => None
     }.filterNot {
@@ -228,7 +228,7 @@ object AvroSimpleFeatureTypeUtils {
         StandardField
       }
 
-    val extraProps = field.getProps.filterNot {
+    val extraProps = field.getProps.asScala.filterNot {
       case (key, _) => reservedAvroProperties.contains(key)
     }.toMap
 
@@ -238,7 +238,7 @@ object AvroSimpleFeatureTypeUtils {
   }
 
   private def isFieldNullable(field: Schema.Field): Boolean = {
-    field.schema.getType == Schema.Type.UNION && field.schema.getTypes.map(_.getType).contains(Schema.Type.NULL)
+    field.schema.getType == Schema.Type.UNION && field.schema.getTypes.asScala.map(_.getType).contains(Schema.Type.NULL)
   }
 
   private case class GeoMesaAvroMetadata(field: GeoMesaAvroField, extraProps: Map[String, String], exclude: Boolean)
@@ -286,7 +286,7 @@ object AvroSimpleFeatureTypeUtils {
       field.schema.getType match {
         case Schema.Type.UNION =>
           // if a union has more than one non-null type, it should not be converted to an SFT
-          val unionTypes = field.schema.getTypes.map(_.getType).filter(_ != Schema.Type.NULL).toSet
+          val unionTypes = field.schema.getTypes.asScala.map(_.getType).filter(_ != Schema.Type.NULL).toSet
           if (unionTypes.size != 1 || typ != unionTypes.head) {
             throw InvalidFieldTypeException(field.name, KEY, typ.getName)
           }
@@ -373,7 +373,7 @@ object AvroSimpleFeatureTypeUtils {
      */
     val WKT: String = "wkt"
     /**
-     * Well-Known Bytes representation as an [[Array]] of [[Byte]]s
+     * Well-Known Binary representation as an [[Array]] of [[Byte]]s
      */
     val WKB: String = "wkb"
 
@@ -384,7 +384,7 @@ object AvroSimpleFeatureTypeUtils {
 
     override protected val serializerMatcher: PartialFunction[String, Geometry => AnyRef] = {
       case WKT => geom => WKTUtils.write(geom)
-      case WKB => geom => WKBUtils.write(geom)
+      case WKB => geom => ByteBuffer.wrap(WKBUtils.write(geom))
     }
 
     override protected val deserializerMatcher: PartialFunction[String, AnyRef => Geometry] = {

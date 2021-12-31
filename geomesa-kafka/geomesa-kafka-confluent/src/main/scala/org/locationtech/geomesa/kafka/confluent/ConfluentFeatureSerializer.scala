@@ -14,8 +14,10 @@ import io.confluent.kafka.serializers.{KafkaAvroDeserializer, KafkaAvroSerialize
 import org.apache.avro.Schema
 import org.apache.avro.generic.{GenericData, GenericRecord}
 import org.locationtech.geomesa.features.SerializationOption.SerializationOption
+import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeUtils
 import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeUtils._
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, SimpleFeatureSerializer}
+import org.locationtech.geomesa.kafka.confluent.ConfluentMetadata.{SchemaIdKey, SubjectPostfix}
 import org.locationtech.geomesa.kafka.data.KafkaDataStore
 import org.locationtech.geomesa.security.SecurityUtils
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
@@ -56,31 +58,36 @@ class ConfluentFeatureSerializer(
     override def initialValue(): KafkaAvroDeserializer = new KafkaAvroDeserializer(schemaRegistryClient)
   }
 
-  private val confluentSerDes = new ThreadLocal[ConfluentFeatureSerDes]() {
-    override def initialValue(): ConfluentFeatureSerDes = {
-      val schemaId = Option(sft.getUserData.get(ConfluentMetadata.SchemaIdKey))
-        .map(_.asInstanceOf[String].toInt).getOrElse {
-          throw new IllegalStateException(s"Cannot create ConfluentFeatureSerializer because SimpleFeatureType " +
-            s"'${sft.getTypeName}' does not have a schema id")
-        }
-      val schema = schemaRegistryClient.getById(schemaId)
-      val topic = Option(KafkaDataStore.topic(sft)).getOrElse {
-        throw new IllegalStateException(s"Cannot create ConfluentFeatureSerializer because SimpleFeatureType " +
-          s"'${sft.getTypeName}' does not have a Kafka topic")
+  private val confluentSerDes = {
+    val topic = Option(KafkaDataStore.topic(sft)).getOrElse {
+      throw new IllegalStateException(s"Cannot create ConfluentFeatureSerializer because SimpleFeatureType " +
+        s"'${sft.getTypeName}' does not have a Kafka topic")
+    }
+
+    // if sft has schema id, look up schema in registry, else convert sft to schema and register it
+    val schema = Option(sft.getUserData.get(SchemaIdKey))
+      .map(id => schemaRegistryClient.getById(id.asInstanceOf[String].toInt))
+      .getOrElse {
+        val subject = topic + SubjectPostfix
+        val schema = AvroSimpleFeatureTypeUtils.sftToSchema(sft)
+        val schemaId = schemaRegistryClient.register(subject, schema)
+        println("Schema id: " + schemaId.toString)
+        //sft.getUserData.put(SchemaIdKey, schemaId.toString) // why is this an immutable map?
+        schema
       }
 
-      new ConfluentFeatureSerDes(schema, sft, topic)
-    }
+    new ConfluentFeatureSerDes(schema, sft, topic)
   }
 
   override def serialize(feature: SimpleFeature): Array[Byte] = {
-    val record = confluentSerDes.get.write(feature)
-    kafkaAvroSerializer.get.serialize(confluentSerDes.get.topic, record)
+    val record = confluentSerDes.write(feature)
+    println("Serializing for topic: " + confluentSerDes.topic)
+    kafkaAvroSerializer.get.serialize(confluentSerDes.topic, record)
   }
 
   override def deserialize(id: String, bytes: Array[Byte]): SimpleFeature = {
     val record = kafkaAvroDeserializer.get.deserialize("", bytes).asInstanceOf[GenericRecord]
-    val feature = confluentSerDes.get.read(id, record)
+    val feature = confluentSerDes.read(id, record)
 
     // set the feature visibility if it exists
     Option(sft.getUserData.get(GeoMesaAvroVisibilityField.KEY)).map(_.asInstanceOf[String]).foreach { fieldName =>
@@ -114,7 +121,7 @@ class ConfluentFeatureSerializer(
       serializers.foreach { serInfo =>
         try {
           val attribute = feature.getAttribute(serInfo.fieldName)
-          val data = serInfo.serializer.asInstanceOf[AnyRef => AnyRef].apply(attribute) // haha what
+          val data = serInfo.serializer.asInstanceOf[AnyRef => AnyRef].apply(attribute)
           if (data == null && !serInfo.nullable) {
             throw new NullPointerException(s"Field '${serInfo.fieldName}' cannot have a null value")
           } else {
@@ -154,9 +161,9 @@ class ConfluentFeatureSerializer(
 
         if (descriptor == null) {
           // unfortunately, it is valid for some fields to be excluded...
-          // maybe the config overrides can be used to address this???
-          // throw new IllegalStateException(s"Field '$fieldName' does not exist for SFT '${sft.getTypeName}")
-          SerializationInfo(fieldName, (_: AnyRef) => null, classOf[AnyRef], nullable = true)
+          // maybe the config overrides can be used to address this / user data to fill these fields???
+          throw new IllegalStateException(s"Field '$fieldName' does not exist for SFT '${sft.getTypeName}")
+          //SerializationInfo(fieldName, (_: AnyRef) => null, classOf[AnyRef], nullable = true)
         } else {
           val binding = descriptor.getType.getBinding
           val nullable = Option(descriptor.getUserData.get(SimpleFeatureTypes.AttributeOptions.OptNullable))

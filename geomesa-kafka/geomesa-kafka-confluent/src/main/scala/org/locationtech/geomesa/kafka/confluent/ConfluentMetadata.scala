@@ -28,6 +28,7 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient) extends GeoMes
       new CacheLoader[String, String] {
         override def load(topic: String): String = {
           try {
+            println("Loading topic: " + topic)
             val subject = topic + SubjectPostfix
             val schemaId = schemaRegistry.getLatestSchemaMetadata(subject).getId
             val sft = AvroSimpleFeatureTypeUtils.schemaToSft(schemaRegistry.getById(schemaId))
@@ -36,7 +37,7 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient) extends GeoMes
             KafkaDataStore.setTopic(sft, topic)
             SimpleFeatureTypes.encodeType(sft, includeUserData = true)
           } catch {
-            case NonFatal(e) => logger.error("Error retrieving schema from confluent registry: ", e); null
+            case NonFatal(e) => logger.error("Error retrieving schema from confluent registry: "/*, e*/); null
           }
         }
       }
@@ -58,6 +59,7 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient) extends GeoMes
       if (!cache) {
         topicSftCache.invalidate(typeName)
       }
+      println("Reading cache: " + typeName)
       Option(topicSftCache.get(typeName))
     }
   }
@@ -71,13 +73,26 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient) extends GeoMes
     }
   }
 
-  override def close(): Unit = {}
+  override def insert(typeName: String, key: String, value: String): Unit = {
+    if (key != GeoMesaMetadata.AttributesKey) {
+      logger.warn(s"Requested insert on ConfluentMetadata with unsupported key $key. " +
+        s"ConfluentMetadata only supports ${GeoMesaMetadata.AttributesKey}")
+    } else {
+      println("Inserting cache: " + typeName)
+      topicSftCache.put(typeName, value)
+    }
+  }
+
+  override def insert(typeName: String, kvPairs: Map[String, String]): Unit = {
+    kvPairs.foreach { case (key, value) =>
+      insert(typeName, key, value)
+    }
+  }
 
   override def scan(typeName: String, prefix: String, cache: Boolean): Seq[(String, String)] =
     throw new NotImplementedError(s"ConfluentMetadata only supports ${GeoMesaMetadata.AttributesKey}")
 
-  override def insert(typeName: String, key: String, value: String): Unit = {}
-  override def insert(typeName: String, kvPairs: Map[String, String]): Unit = {}
+  override def close(): Unit = {}
   override def remove(typeName: String, key: String): Unit = {}
   override def remove(typeName: String, keys: Seq[String]): Unit = {}
   override def delete(typeName: String): Unit = {}

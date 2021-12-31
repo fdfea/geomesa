@@ -64,6 +64,7 @@ object KafkaFeatureWriter {
       val (key, value, headers) = serializer.serialize(GeoMessage.change(sf))
       val record = new ProducerRecord(topic, key, value)
       headers.foreach { case (k, v) => RecordVersions.setHeader(record, k, v) }
+      println(s"Writing update to: $topic")
       producer.send(record)
     }
 
