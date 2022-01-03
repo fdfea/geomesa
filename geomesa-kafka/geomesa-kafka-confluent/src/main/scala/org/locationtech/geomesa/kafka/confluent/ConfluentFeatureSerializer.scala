@@ -70,8 +70,7 @@ class ConfluentFeatureSerializer(
       .getOrElse {
         val subject = topic + SubjectPostfix
         val schema = AvroSimpleFeatureTypeUtils.sftToSchema(sft)
-        val schemaId = schemaRegistryClient.register(subject, schema)
-        println("Schema id: " + schemaId.toString)
+        schemaRegistryClient.register(subject, schema)
         //sft.getUserData.put(SchemaIdKey, schemaId.toString) // why is this an immutable map?
         schema
       }
@@ -81,7 +80,6 @@ class ConfluentFeatureSerializer(
 
   override def serialize(feature: SimpleFeature): Array[Byte] = {
     val record = confluentSerDes.write(feature)
-    println("Serializing for topic: " + confluentSerDes.topic)
     kafkaAvroSerializer.get.serialize(confluentSerDes.topic, record)
   }
 
@@ -155,15 +153,16 @@ class ConfluentFeatureSerializer(
     }
 
     private val serializers: Seq[SerializationInfo[_]] = {
-      schema.getFields.asScala.map { field =>
+      schema.getFields.asScala.foldLeft(Seq.empty[SerializationInfo[_]]) { case (acc, field) =>
         val fieldName = field.name
         val descriptor = sft.getDescriptor(fieldName)
 
         if (descriptor == null) {
           // unfortunately, it is valid for some fields to be excluded...
           // maybe the config overrides can be used to address this / user data to fill these fields???
-          throw new IllegalStateException(s"Field '$fieldName' does not exist for SFT '${sft.getTypeName}")
+          //throw new IllegalStateException(s"Field '$fieldName' does not exist for SFT '${sft.getTypeName}'")
           //SerializationInfo(fieldName, (_: AnyRef) => null, classOf[AnyRef], nullable = true)
+          acc
         } else {
           val binding = descriptor.getType.getBinding
           val nullable = Option(descriptor.getUserData.get(SimpleFeatureTypes.AttributeOptions.OptNullable))
@@ -176,7 +175,7 @@ class ConfluentFeatureSerializer(
             } else {
               value: AnyRef => value
             }
-          SerializationInfo(fieldName, serializer, binding, nullable)
+          acc :+ SerializationInfo(fieldName, serializer, binding, nullable)
         }
       }
     }

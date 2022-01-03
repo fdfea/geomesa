@@ -389,7 +389,7 @@ object AvroSimpleFeatureTypeUtils {
 
     override protected val deserializerMatcher: PartialFunction[String, AnyRef => Geometry] = {
       case WKT => data => WKTUtils.read(data.toString)
-      case WKB => data => WKBUtils.read(data.asInstanceOf[ByteBuffer].array())
+      case WKB => data => WKBUtils.read(data.asInstanceOf[ByteBuffer].array)
     }
   }
 

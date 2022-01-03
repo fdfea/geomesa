@@ -11,9 +11,8 @@ package org.locationtech.geomesa.kafka.confluent
 import io.confluent.kafka.serializers.{KafkaAvroDeserializer, KafkaAvroSerializer}
 import org.apache.avro.Schema
 import org.apache.avro.generic.{GenericData, GenericRecord}
-import org.apache.kafka.clients.consumer.ConsumerConfig.{BOOTSTRAP_SERVERS_CONFIG, KEY_DESERIALIZER_CLASS_CONFIG, VALUE_DESERIALIZER_CLASS_CONFIG}
 import org.apache.kafka.clients.consumer.internals.NoOpConsumerRebalanceListener
-import org.apache.kafka.clients.consumer.{Consumer, KafkaConsumer}
+import org.apache.kafka.clients.consumer.{Consumer, ConsumerConfig, ConsumerRecord, KafkaConsumer}
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
 import org.geotools.data.{DataStoreFinder, Transaction}
@@ -33,8 +32,10 @@ import org.specs2.mutable.{After, Specification}
 import org.specs2.runner.JUnitRunner
 
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 import java.util.{Date, Properties}
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
 
 @RunWith(classOf[JUnitRunner])
@@ -42,22 +43,44 @@ class ConfluentKafkaDataStoreTest extends Specification {
   sequential
 
   "ConfluentKafkaDataStore" should {
-    /*
-    "fail to get a feature source when the schema cannot be converted to an SFT" in new ConfluentKafkaTestContext {
-      private val record = new GenericData.Record(badSchema)
-      record.put("f1", "POINT (10 20)")
-
-      private val producer = getProducer()
-      producer.send(new ProducerRecord[String, GenericRecord](topic, null, record)).get
+    "write simple features to avro when the SFT and features are valid" in new ConfluentKafkaTestContext {
+      private val sftName = "sft"
+      private val sft = SimpleFeatureTypes.createType(sftName, encodedSft2)
+      sft.getUserData.put(SimpleFeatureTypes.Configs.MixedGeometries, "true")
+      KafkaDataStore.setTopic(sft, topic)
 
       private val kds = getStore()
+      kds.createSchema(sft)
 
-      // the geometry field cannot be parsed so the SFT never gets created and CKDS can't find the schema
-      kds.getFeatureSource(topic) must throwAn[Exception]
-    }
+      private val id = "1"
+      private val geom = generatePoint(2, 2)
+      private val date = new Date(1638915744897L)
 
-    "fail to get a feature writer when the SFT cannot be converted to a schema" in new ConfluentKafkaTestContext {
-      ok
+      private val expectedGeom = WKBUtils.write(geom)
+      private val expectedDate = date.getTime
+
+      private val feature = ScalaSimpleFeature.create(sft, id, geom, date)
+
+      private val messageBuffer = ListBuffer.empty[ConsumerRecord[String, GenericRecord]]
+      private val es = Executors.newFixedThreadPool(1)
+      es.execute(pollTopicRunnable(topic, messageBuffer))
+
+      WithClose(kds.getFeatureWriterAppend(sftName, Transaction.AUTO_COMMIT)) { writer =>
+        FeatureUtils.write(writer, feature, useProvidedFid = true)
+
+        eventually(20, 100.millis) {
+          val records = messageBuffer.toList
+
+          records.size mustEqual 1
+
+          val record = records.head
+          record.key mustEqual id
+          record.value.get("shape").asInstanceOf[ByteBuffer].array mustEqual expectedGeom
+          record.value.get("date") mustEqual expectedDate
+        }
+      }
+
+      es.shutdownNow()
     }
 
     "read simple features from avro when the schema and records are valid" in new ConfluentKafkaTestContext {
@@ -77,9 +100,9 @@ class ConfluentKafkaDataStoreTest extends Specification {
       record2.put("date", "2021-12-07T17:23:25.372-05:00")
       record2.put("visibility", "hidden")
 
-      private val producer = getProducer()
-      producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
-      producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
+      private val producer = getProducer[String, GenericRecord]()
+      producer.send(new ProducerRecord(topic, id1, record1)).get
+      producer.send(new ProducerRecord(topic, id2, record2)).get
 
       private val kds = getStore()
       private val fs = kds.getFeatureSource(topic)
@@ -99,50 +122,28 @@ class ConfluentKafkaDataStoreTest extends Specification {
         SecurityUtils.getVisibility(feature) mustEqual ""
       }
     }
-     */
 
-    "write simple features to avro when the SFT and features are valid" in new ConfluentKafkaTestContext {
-      private val sftName = "sft"
-      private val sft = SimpleFeatureTypes.createType(sftName, encodedSft2)
-      sft.getUserData.put("geomesa.mixed.geometries", "true")
-      //need to set topic?
-      KafkaDataStore.setTopic(sft, topic)
-
-      private val kds = getStore()
-      kds.createSchema(sft)
-
-      private val id = "1"
-      private val geom = generatePoint(2, 2)
-      private val date = new Date(1638915744897L)
-
-      private val expectedGeom = WKBUtils.write(geom)
-      private val expectedDate = date.getTime
-
-      private val feature = ScalaSimpleFeature.create(sft, id, geom, date)
-
-      WithClose(kds.getFeatureWriterAppend(sftName, Transaction.AUTO_COMMIT)) { writer =>
-        FeatureUtils.write(writer, feature, useProvidedFid = true)
+    //what happens when topic names collide?
+    "read simple features then write avro" >> {
+      "when there are no excluded fields" in new ConfluentKafkaTestContext {
+        ok
       }
 
-      WithClose(getConsumer()) { consumer =>
-        val duration = java.time.Duration.ofMillis(100)
-
-        eventually(20, 100.millis) {
-          val results = KafkaConsumerVersions.poll(consumer, duration)
-          println("Results count: " + results.count())
-          val records = results.records(topic).asScala
-
-          records.size mustEqual 1
-
-          val record = records.head
-          record.key mustEqual id
-          record.value.get("shape") mustEqual expectedGeom
-          record.value.get("date") mustEqual expectedDate
-        }
+      "when there are excluded fields" in new ConfluentKafkaTestContext {
+        ok
       }
     }
 
-    /*
+    "write avro then read simple features" >> {
+      "when there are no excluded fields" in new ConfluentKafkaTestContext {
+        ok
+      }
+
+      "when there are excluded fields" in new ConfluentKafkaTestContext {
+        ok
+      }
+    }
+
     "support the GeoMessage control operation for" >> {
       "update" in new ConfluentKafkaTestContext {
         private val id = "1"
@@ -151,8 +152,8 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record1.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom1)))
         record1.put("date", 1639145281285L)
 
-        private val producer = getProducer()
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id, record1)).get
+        private val producer = getProducer[String, GenericRecord]()
+        producer.send(new ProducerRecord(topic, id, record1)).get
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -198,9 +199,9 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", 1639145515643L)
 
-        private val producer = getProducer()
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
+        private val producer = getProducer[String, GenericRecord]()
+        producer.send(new ProducerRecord(topic, id1, record1)).get
+        producer.send(new ProducerRecord(topic, id2, record2)).get
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -235,9 +236,9 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", 1639145515643L)
 
-        private val producer = getProducer()
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
+        private val producer = getProducer[String, GenericRecord]()
+        producer.send(new ProducerRecord(topic, id1, record1)).get
+        producer.send(new ProducerRecord(topic, id2, record2)).get
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -253,7 +254,23 @@ class ConfluentKafkaDataStoreTest extends Specification {
         }
       }
     }
-     */
+
+    "fail to get a feature source when the schema cannot be converted to an SFT" in new ConfluentKafkaTestContext {
+      private val record = new GenericData.Record(badSchema)
+      record.put("f1", "POINT (10 20)")
+
+      private val producer = getProducer[String, GenericRecord]()
+      producer.send(new ProducerRecord(topic, null, record)).get
+
+      private val kds = getStore()
+
+      // the geometry field cannot be parsed so the SFT never gets created and CKDS can't find the schema
+      kds.getFeatureSource(topic) must throwAn[Exception]
+    }
+
+    "fail to get a feature writer when the SFT cannot be converted to a schema" in new ConfluentKafkaTestContext {
+      ok
+    }
   }
 }
 
@@ -341,40 +358,40 @@ private object ConfluentKafkaDataStoreTest {
 
 private trait ConfluentKafkaTestContext extends After {
 
-  protected val confluentKafka: EmbeddedConfluent = new EmbeddedConfluent()
-
+  private val confluentKafka: EmbeddedConfluent = new EmbeddedConfluent()
   private val geomFactory = new GeometryFactory()
 
-  override def after: Unit = confluentKafka.close()
+  override final def after: Unit = confluentKafka.close()
 
-  protected def getProducer(extraProps: Map[String, String] = Map.empty): KafkaProducer[String, GenericRecord] = {
+  protected final def getProducer[T, K](extraProps: (String, String)*): KafkaProducer[T, K] = {
     val props = new Properties()
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, classOf[StringSerializer])
     props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, classOf[KafkaAvroSerializer])
     props.put("schema.registry.url", confluentKafka.schemaRegistryUrl)
-    props.putAll(extraProps.asJava)
+    props.putAll(extraProps.toMap.asJava)
 
-    new KafkaProducer[String, GenericRecord](props)
+    new KafkaProducer[T, K](props)
   }
 
-  protected def getConsumer(extraProps: Map[String, String] = Map.empty): Consumer[String, GenericRecord] = {
+  protected final def getConsumer[T, K](topic: String, extraProps: (String, String)*): Consumer[T, K] = {
     val props = new Properties()
-    props.put(BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
-    props.put(KEY_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
-    props.put(VALUE_DESERIALIZER_CLASS_CONFIG, classOf[KafkaAvroDeserializer].getName)
+    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
+    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
+    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[KafkaAvroDeserializer].getName)
+    props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true")
     props.put("schema.registry.url", confluentKafka.schemaRegistryUrl)
-    props.put("group.id", "test")
-    props.putAll(extraProps.asJava)
+    props.put(ConsumerConfig.GROUP_ID_CONFIG, "test")
+    props.putAll(extraProps.toMap.asJava)
 
-    val consumer = new KafkaConsumer[String, GenericRecord](props)
+    val consumer = new KafkaConsumer[T, K](props)
     val listener = new NoOpConsumerRebalanceListener()
     KafkaConsumerVersions.subscribe(consumer, topic, listener)
 
     consumer
   }
 
-  protected def getStore(extraParams: Map[String, String] = Map.empty): KafkaDataStore = {
+  protected final def getStore(extraParams: (String, String)*): KafkaDataStore = {
     val params = Map(
       "kafka.schema.registry.url" -> confluentKafka.schemaRegistryUrl,
       "kafka.brokers" -> confluentKafka.brokers,
@@ -390,9 +407,35 @@ private trait ConfluentKafkaTestContext extends After {
     DataStoreFinder.getDataStore(params.asJava).asInstanceOf[KafkaDataStore]
   }
 
-  protected def generatePoint(x: Double, y: Double): Point = geomFactory.createPoint(new Coordinate(x, y))
+  protected final def pollTopicRunnable[T, K](topic: String,
+                                              buffer: ListBuffer[ConsumerRecord[T, K]]): Runnable = () => {
+    val consumer = getConsumer[T, K](topic)
+    val frequency = java.time.Duration.ofMillis(100)
 
-  protected def generatePolygon(points: Seq[(Double, Double)]): Polygon = {
+    try {
+      while (!Thread.interrupted()) {
+        try {
+          val results = KafkaConsumerVersions.poll(consumer, frequency).asScala
+          results.foreach { record =>
+            println(s"Key: ${record.key}")
+            buffer += record
+          }
+        } catch {
+          case t: Throwable =>
+            t.printStackTrace()
+            Thread.currentThread().interrupt()
+        }
+      }
+    } finally {
+      consumer.close()
+    }
+  }
+
+  protected final def generatePoint(x: Double, y: Double): Point = {
+    geomFactory.createPoint(new Coordinate(x, y))
+  }
+
+  protected final def generatePolygon(points: Seq[(Double, Double)]): Polygon = {
     geomFactory.createPolygon(points.map(point => new Coordinate(point._1, point._2)).toArray)
   }
 }
