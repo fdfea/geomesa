@@ -37,7 +37,7 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient) extends GeoMes
             KafkaDataStore.setTopic(sft, topic)
             SimpleFeatureTypes.encodeType(sft, includeUserData = true)
           } catch {
-            case NonFatal(e) => logger.error("Error retrieving schema from confluent registry: "/*, e*/); null
+            case NonFatal(e) => logger.warn(s"Error retrieving schema from confluent registry: ${e.getMessage}"); null
           }
         }
       }

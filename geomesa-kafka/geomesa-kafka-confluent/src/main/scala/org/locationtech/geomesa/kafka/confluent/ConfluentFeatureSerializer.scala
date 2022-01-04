@@ -208,7 +208,6 @@ class ConfluentFeatureSerializer(
 
     case class SerializationException(fieldName: String, clazz: Class[_], cause: Throwable)
       extends RuntimeException(s"Cannot serialize field '$fieldName' from a '${clazz.getName}': ${cause.getMessage}")
-
     case class DeserializationException(fieldName: String, clazz: Class[_], cause: Throwable)
       extends RuntimeException(s"Cannot deserialize field '$fieldName' into a '${clazz.getName}': ${cause.getMessage}")
   }
