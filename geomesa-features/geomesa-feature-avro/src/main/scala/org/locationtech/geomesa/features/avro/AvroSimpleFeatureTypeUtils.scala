@@ -33,9 +33,9 @@ object AvroSimpleFeatureTypeUtils {
   /**
    * Convert an Avro [[Schema]] into a [[SimpleFeatureType]].
    */
-  def schemaToSft(schema: Schema): SimpleFeatureType = {
+  def schemaToSft(schema: Schema, name: Option[String] = None): SimpleFeatureType = {
     val builder = new SimpleFeatureTypeBuilder
-    builder.setName(schema.getName)
+    builder.setName(name.getOrElse(schema.getName))
 
     // any extra props on the schema go in the SFT user data
     val sftUserData = schema.getProps.asScala.filterNot {

@@ -166,9 +166,15 @@ class ConfluentKafkaDataStoreTest extends Specification {
       record2.put("date", "2021-12-07T17:23:25.372-05:00")
       record2.put("visibility", "hidden")
 
+<<<<<<< HEAD
       private val producer = getProducer[String, GenericRecord]()
       producer.send(new ProducerRecord(topic, id1, record1)).get
       producer.send(new ProducerRecord(topic, id2, record2)).get
+=======
+      private val producer = getProducer()
+      producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
+      producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
+>>>>>>> locationtech/main
 
       private val kds = getStore()
       private val fs = kds.getFeatureSource(topic)
@@ -460,6 +466,33 @@ class ConfluentKafkaDataStoreTest extends Specification {
       }
     }
 
+    "use the schema overrides config if available" in new ConfluentKafkaTestContext {
+      private val id = "1"
+      private val record = new GenericData.Record(schema2_NoGeoMesa)
+      private val expectedGeom = generatePoint(-12.2d, 120.7d)
+      record.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom)))
+      record.put("date", 1639145281285L)
+
+      private val producer = getProducer()
+      producer.send(new ProducerRecord[String, GenericRecord](topic, id, record)).get
+
+      private val schemaOverridesConfig =
+        ConfluentKafkaDataStoreFactoryTest.generateSchemaOverrideConfig(Map(topic -> schemaJson2))
+      private val extraParams = Map("kafka.schema.overrides" -> schemaOverridesConfig)
+      private val kds = getStore(extraParams)
+      private val fs = kds.getFeatureSource(topic)
+
+      eventually(20, 100.millis) {
+        SelfClosingIterator(fs.getFeatures.features).toArray.length mustEqual 1
+
+        val feature = fs.getFeatures.features.next
+        SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
+        feature.getID mustEqual id
+        feature.getAttribute("shape") mustEqual expectedGeom
+        feature.getAttribute("date") mustEqual new Date(1639145281285L)
+      }
+    }
+
     "support the GeoMessage control operation for" >> {
       "update" in new ConfluentKafkaTestContext {
         private val id = "1"
@@ -470,8 +503,13 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record1.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom1)))
         record1.put("date", expectedDate1.getTime)
 
+<<<<<<< HEAD
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id, record1)).get
+=======
+        private val producer = getProducer()
+        producer.send(new ProducerRecord[String, GenericRecord](topic, id, record1)).get
+>>>>>>> locationtech/main
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -526,9 +564,15 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", expectedDate2.getTime)
 
+<<<<<<< HEAD
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id1, record1)).get
         producer.send(new ProducerRecord(topic, id2, record2)).get
+=======
+        private val producer = getProducer()
+        producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
+        producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
+>>>>>>> locationtech/main
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -570,9 +614,15 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", expectedDate2.getTime)
 
+<<<<<<< HEAD
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id1, record1)).get
         producer.send(new ProducerRecord(topic, id2, record2)).get
+=======
+        private val producer = getProducer()
+        producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
+        producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
+>>>>>>> locationtech/main
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -591,6 +641,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
         }
       }
     }
+<<<<<<< HEAD
 
     "fail to get a feature source when the schema cannot be converted to an SFT" in new ConfluentKafkaTestContext {
       private val record = new GenericData.Record(badSchema)

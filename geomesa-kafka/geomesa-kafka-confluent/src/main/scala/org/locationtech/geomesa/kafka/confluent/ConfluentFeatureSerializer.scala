@@ -31,23 +31,28 @@ import scala.collection.JavaConverters._
 import scala.util.Try
 import scala.util.control.NonFatal
 
-object ConfluentFeatureSerializer extends LazyLogging {
+object ConfluentFeatureSerializer {
 
-  def builder(sft: SimpleFeatureType, schemaRegistryUrl: URL): Builder = new Builder(sft, schemaRegistryUrl)
+  def builder(sft: SimpleFeatureType, schemaRegistryUrl: URL, schemaOverride: Option[Schema] = None): Builder =
+    new Builder(sft, schemaRegistryUrl, schemaOverride)
 
-  class Builder private [ConfluentFeatureSerializer] (sft: SimpleFeatureType, schemaRegistryUrl: URL)
-      extends SimpleFeatureSerializer.Builder[Builder] {
+  class Builder private[ConfluentFeatureSerializer](
+    sft: SimpleFeatureType,
+    schemaRegistryUrl: URL,
+    schemaOverride: Option[Schema] = None
+  ) extends SimpleFeatureSerializer.Builder[Builder] {
     override def build(): ConfluentFeatureSerializer = {
       val client = new CachedSchemaRegistryClient(schemaRegistryUrl.toExternalForm, 100)
-      new ConfluentFeatureSerializer(sft, client, options.toSet)
+      new ConfluentFeatureSerializer(sft, client, schemaOverride, options.toSet)
     }
   }
 }
 
 class ConfluentFeatureSerializer(
-    sft: SimpleFeatureType,
-    schemaRegistryClient: SchemaRegistryClient,
-    val options: Set[SerializationOption] = Set.empty
+  sft: SimpleFeatureType,
+  schemaRegistryClient: SchemaRegistryClient,
+  schemaOverride: Option[Schema] = None,
+  val options: Set[SerializationOption] = Set.empty
 ) extends SimpleFeatureSerializer with LazyLogging {
 
   private val kafkaAvroSerializer = new ThreadLocal[KafkaAvroSerializer]() {
@@ -65,15 +70,17 @@ class ConfluentFeatureSerializer(
     }
 
     // if sft has schema id, look up schema in registry, else convert sft to schema and register it
-    val schema = Option(sft.getUserData.get(SchemaIdKey))
-      .map(id => schemaRegistryClient.getById(id.asInstanceOf[String].toInt))
-      .getOrElse {
-        val subject = topic + SubjectPostfix
-        val schema = AvroSimpleFeatureTypeUtils.sftToSchema(sft)
-        schemaRegistryClient.register(subject, schema)
-        //sft.getUserData.put(SchemaIdKey, schemaId.toString) // why is this an immutable map?
-        schema
-      }
+    val schema = schemaOverride.getOrElse {
+      Option(sft.getUserData.get(SchemaIdKey))
+        .map(id => schemaRegistryClient.getById(id.asInstanceOf[String].toInt))
+        .getOrElse {
+          val subject = topic + SubjectPostfix
+          val schema = AvroSimpleFeatureTypeUtils.sftToSchema(sft)
+          schemaRegistryClient.register(subject, schema)
+          //sft.getUserData.put(SchemaIdKey, schemaId.toString) // why is this an immutable map?
+          schema
+        }
+    }
 
     new ConfluentFeatureSerDes(schema, sft, topic)
   }
