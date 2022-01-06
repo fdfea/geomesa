@@ -13,7 +13,7 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.avro.Schema
 import org.geotools.data.DataAccessFactory.Param
 import org.geotools.data.DataStoreFactorySpi
-import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeParser
+import org.locationtech.geomesa.features.avro.AvroSimpleFeatureTypeUtils
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.GeoMesaDataStoreInfo
 import org.locationtech.geomesa.kafka.data.{KafkaDataStore, KafkaDataStoreFactory, KafkaDataStoreParams}
 import org.locationtech.geomesa.utils.geotools.GeoMesaParam
@@ -93,7 +93,7 @@ object ConfluentKafkaDataStoreFactory extends GeoMesaDataStoreInfo with LazyLogg
           case (topic, schemaConfig) =>
             try {
               val schema = new Schema.Parser().parse(schemaConfig.render(ConfigRenderOptions.concise()))
-              val sft = AvroSimpleFeatureTypeParser.schemaToSft(schema, Some(topic))
+              val sft = AvroSimpleFeatureTypeUtils.schemaToSft(schema, Some(topic))
               topic -> (sft, schema)
             } catch {
               case NonFatal(ex) =>

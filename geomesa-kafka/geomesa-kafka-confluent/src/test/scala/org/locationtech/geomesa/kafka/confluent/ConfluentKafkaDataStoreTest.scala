@@ -1,10 +1,10 @@
-/***********************************************************************
+/** *********************************************************************
  * Copyright (c) 2013-2022 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
- ***********************************************************************/
+ * ********************************************************************* */
 
 package org.locationtech.geomesa.kafka.confluent
 
@@ -15,7 +15,9 @@ import org.apache.kafka.clients.consumer.internals.NoOpConsumerRebalanceListener
 import org.apache.kafka.clients.consumer.{Consumer, ConsumerConfig, ConsumerRecord, KafkaConsumer}
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
+import org.geotools.data.simple.SimpleFeatureSource
 import org.geotools.data.{DataStoreFinder, Transaction}
+import org.geotools.filter.FidFilterImpl
 import org.joda.time.format.ISODateTimeFormat
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
@@ -29,11 +31,16 @@ import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.text.{WKBUtils, WKTUtils}
 import org.locationtech.jts.geom.{Coordinate, GeometryFactory, Point, Polygon}
-import org.specs2.mutable.{After, Specification}
+import org.opengis.feature.simple.SimpleFeature
+import org.opengis.filter.identity.Identifier
+import org.opengis.filter.{Filter, FilterVisitor, Id, IncludeFilter}
+import org.specs2.matcher.Scope
+import org.specs2.mutable.{After, BeforeAfter, Specification}
 import org.specs2.runner.JUnitRunner
 
 import java.nio.ByteBuffer
-import java.util.concurrent.Executors
+import java.util
+import java.util.concurrent.{ExecutorService, Executors}
 import java.util.{Date, Properties}
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
@@ -81,8 +88,90 @@ class ConfluentKafkaDataStoreTest extends Specification {
       threads.shutdownNow()
     }
 
-    /*
-    "write simple features to avro then modify them" in new ConfluentKafkaTestContext {
+    "write simple features then read them" in new ConfluentKafkaTestContext {
+      private val sft = SimpleFeatureTypes.createType(topic, encodedSft2)
+      sft.getUserData.put(SimpleFeatureTypes.Configs.MixedGeometries, "true")
+      KafkaDataStore.setTopic(sft, topic) //is this needed?
+
+      private val kds = getStore()
+      kds.createSchema(sft)
+
+      private val id = "1"
+      private val geom = generatePoint(2, 2)
+      private val date = new Date(1638915744897L)
+
+      private val feature = ScalaSimpleFeature.create(sft, id, geom, date)
+
+      WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
+        FeatureUtils.write(writer, feature, useProvidedFid = true)
+      }
+
+      eventually(20, 100.millis) {
+        val fs = kds.getFeatureSource(topic)
+        val features = getFeatures(fs)
+        features.length mustEqual 1
+
+        val feature = features.head
+        SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
+        feature.getID mustEqual id
+        feature.getAttribute("shape") mustEqual geom
+        feature.getAttribute("date") mustEqual date
+      }
+    }
+
+    "write simple features then modify them" in new ConfluentKafkaTestContext {
+      private val sft = SimpleFeatureTypes.createType(topic, encodedSft2)
+      sft.getUserData.put(SimpleFeatureTypes.Configs.MixedGeometries, "true")
+      KafkaDataStore.setTopic(sft, topic) //is this needed?
+
+      private val kds = getStore()
+      kds.createSchema(sft)
+
+      private val id = "1"
+      private val geom = generatePoint(2, 2)
+      private val date = new Date(1638915744897L)
+
+      private val feature = ScalaSimpleFeature.create(sft, id, geom, date)
+
+      WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
+        FeatureUtils.write(writer, feature, useProvidedFid = true)
+      }
+
+      eventually(20, 100.millis) {
+        val fs = kds.getFeatureSource(topic)
+        val features = getFeatures(fs)
+        features.length mustEqual 1
+
+        val feature = features.head
+        SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
+        feature.getID mustEqual id
+        feature.getAttribute("shape") mustEqual geom
+        feature.getAttribute("date") mustEqual date
+      }
+
+      private val geom_updated = generatePoint(2, 2)
+      private val date_updated = new Date(1638915744897L)
+
+      private val feature_updated = ScalaSimpleFeature.create(sft, id, geom_updated, date_updated)
+
+      WithClose(kds.getFeatureWriter(topic, new IdFilter(id), Transaction.AUTO_COMMIT)) { writer =>
+        FeatureUtils.write(writer, feature_updated, useProvidedFid = true)
+      }
+
+      eventually(20, 100.millis) {
+        val fs = kds.getFeatureSource(topic)
+        val features_updated = getFeatures(fs)
+        features_updated.length mustEqual 1
+
+        val feature = features_updated.head
+        SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
+        feature.getID mustEqual id
+        feature.getAttribute("shape") mustEqual geom_updated
+        feature.getAttribute("date") mustEqual date_updated
+      }
+    }
+
+    "write simple features to avro and modify them" in new ConfluentKafkaTestContext {
       private val sft = SimpleFeatureTypes.createType(topic, encodedSft2)
       sft.getUserData.put(SimpleFeatureTypes.Configs.MixedGeometries, "true")
       KafkaDataStore.setTopic(sft, topic) //is this needed?
@@ -106,43 +195,43 @@ class ConfluentKafkaDataStoreTest extends Specification {
         FeatureUtils.write(writer, feature, useProvidedFid = true)
       }
 
-      private val fs = kds.getFeatureSource(topic)
-      private val features = fs.getFeatures.features
-
       eventually(20, 100.millis) {
-        SelfClosingIterator(features).toArray.length mustEqual 1
+        val records = messageBuffer.toList
+        records.size mustEqual 1
 
-        val feature = features.next
-        SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
-        feature.getID mustEqual id
-        feature.getAttribute("shape") mustEqual expectedGeom
-        feature.getAttribute("date") mustEqual expectedDate
+        val record = records.head
+        record.key mustEqual id
+        record.value.get("shape") mustEqual expectedGeom
+        record.value.get("date") mustEqual expectedDate
       }
 
-      private val geom_updated = generatePoint(2, 2)
-      private val date_updated = new Date(1638915744897L)
+      messageBuffer.clear()
+
+      private val geom_updated = generatePoint(4, 4)
+      private val date_updated = new Date(1639145281285L)
       private val expectedGeom_updated = ByteBuffer.wrap(WKBUtils.write(geom_updated))
       private val expectedDate_updated = date_updated.getTime
 
       private val feature_updated = ScalaSimpleFeature.create(sft, id, geom_updated, date_updated)
 
-      WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
+      WithClose(kds.getFeatureWriter(topic, new IdFilter(id), Transaction.AUTO_COMMIT)) { writer =>
         FeatureUtils.write(writer, feature_updated, useProvidedFid = true)
       }
 
-      private val features_updated = fs.getFeatures.features
-
       eventually(20, 100.millis) {
-        SelfClosingIterator(features_updated).toArray.length mustEqual 1
+        val records = messageBuffer.toList
+        records.size mustEqual 1
 
-        val feature = features_updated.next
-        SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
-        feature.getID mustEqual id
-        feature.getAttribute("shape") mustEqual expectedGeom_updated
-        feature.getAttribute("date") mustEqual expectedDate_updated
+        val record = records.head
+        record.key mustEqual id
+        record.value.get("shape") mustEqual expectedGeom_updated
+        record.value.get("date") mustEqual expectedDate_updated
       }
+
+      threads.shutdownNow()
     }
 
+    /*
     "read simple features from avro" in new ConfluentKafkaTestContext {
       private val id1 = "1"
       private val expectedPosition1 = generatePoint(10d, 20d)
@@ -166,15 +255,9 @@ class ConfluentKafkaDataStoreTest extends Specification {
       record2.put("date", "2021-12-07T17:23:25.372-05:00")
       record2.put("visibility", "hidden")
 
-<<<<<<< HEAD
       private val producer = getProducer[String, GenericRecord]()
       producer.send(new ProducerRecord(topic, id1, record1)).get
       producer.send(new ProducerRecord(topic, id2, record2)).get
-=======
-      private val producer = getProducer()
-      producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
-      producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
->>>>>>> locationtech/main
 
       private val kds = getStore()
       private val fs = kds.getFeatureSource(topic)
@@ -503,13 +586,8 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record1.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom1)))
         record1.put("date", expectedDate1.getTime)
 
-<<<<<<< HEAD
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id, record1)).get
-=======
-        private val producer = getProducer()
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id, record1)).get
->>>>>>> locationtech/main
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -564,15 +642,9 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", expectedDate2.getTime)
 
-<<<<<<< HEAD
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id1, record1)).get
         producer.send(new ProducerRecord(topic, id2, record2)).get
-=======
-        private val producer = getProducer()
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
->>>>>>> locationtech/main
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -614,15 +686,9 @@ class ConfluentKafkaDataStoreTest extends Specification {
         record2.put("shape", ByteBuffer.wrap(WKBUtils.write(expectedGeom2)))
         record2.put("date", expectedDate2.getTime)
 
-<<<<<<< HEAD
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id1, record1)).get
         producer.send(new ProducerRecord(topic, id2, record2)).get
-=======
-        private val producer = getProducer()
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id1, record1)).get
-        producer.send(new ProducerRecord[String, GenericRecord](topic, id2, record2)).get
->>>>>>> locationtech/main
 
         private val kds = getStore()
         private val fs = kds.getFeatureSource(topic)
@@ -641,7 +707,6 @@ class ConfluentKafkaDataStoreTest extends Specification {
         }
       }
     }
-<<<<<<< HEAD
 
     "fail to get a feature source when the schema cannot be converted to an SFT" in new ConfluentKafkaTestContext {
       private val record = new GenericData.Record(badSchema)
@@ -667,7 +732,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
 
       kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT) must throwAn[Exception]
     }
-     */
+    */
   }
 }
 
@@ -758,9 +823,9 @@ private trait ConfluentKafkaTestContext extends After {
   private val confluentKafka: EmbeddedConfluent = new EmbeddedConfluent()
   private val geomFactory = new GeometryFactory()
 
-  override final def after: Unit = confluentKafka.close()
+  override def after: Unit = confluentKafka.close()
 
-  protected final def getProducer[T, K](extraProps: (String, String)*): KafkaProducer[T, K] = {
+  protected def getProducer[T, K](extraProps: (String, String)*): KafkaProducer[T, K] = {
     val props = new Properties()
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, classOf[StringSerializer])
@@ -771,7 +836,7 @@ private trait ConfluentKafkaTestContext extends After {
     new KafkaProducer[T, K](props)
   }
 
-  protected final def getConsumer[T, K](topic: String, extraProps: (String, String)*): Consumer[T, K] = {
+  protected def getConsumer[T, K](topic: String, extraProps: (String, String)*): Consumer[T, K] = {
     val props = new Properties()
     props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, confluentKafka.brokers)
     props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
@@ -788,7 +853,7 @@ private trait ConfluentKafkaTestContext extends After {
     consumer
   }
 
-  protected final def getStore(extraParams: (String, String)*): KafkaDataStore = {
+  protected def getStore(extraParams: (String, String)*): KafkaDataStore = {
     val params = Map(
       "kafka.schema.registry.url" -> confluentKafka.schemaRegistryUrl,
       "kafka.brokers" -> confluentKafka.brokers,
@@ -804,16 +869,17 @@ private trait ConfluentKafkaTestContext extends After {
     DataStoreFinder.getDataStore(params.asJava).asInstanceOf[KafkaDataStore]
   }
 
-  protected final def pollTopic[T, K](topic: String, buffer: ListBuffer[ConsumerRecord[T, K]]): Runnable = () => {
+  protected def pollTopic[T, K](topic: String, buffer: ListBuffer[ConsumerRecord[T, K]]): Runnable = () => {
     val consumer = getConsumer[T, K](topic)
-    val frequency = java.time.Duration.ofMillis(100)
+    val duration = java.time.Duration.ofMillis(100)
 
     try {
-      while (!Thread.interrupted()) {
+      while (!Thread.interrupted) {
         try {
-          buffer ++= KafkaConsumerVersions.poll(consumer, frequency).asScala
+          buffer ++= KafkaConsumerVersions.poll(consumer, duration).asScala
         } catch {
-          case _: Throwable => Thread.currentThread().interrupt()
+          case _: Throwable =>
+            Thread.currentThread.interrupt()
         }
       }
     } finally {
@@ -821,11 +887,27 @@ private trait ConfluentKafkaTestContext extends After {
     }
   }
 
-  protected final def generatePoint(x: Double, y: Double): Point = {
+  protected def generatePoint(x: Double, y: Double): Point = {
     geomFactory.createPoint(new Coordinate(x, y))
   }
 
-  protected final def generatePolygon(points: Seq[(Double, Double)]): Polygon = {
+  protected def generatePolygon(points: Seq[(Double, Double)]): Polygon = {
     geomFactory.createPolygon(points.map(point => new Coordinate(point._1, point._2)).toArray)
+  }
+
+  protected def getFeatures(fs: SimpleFeatureSource): List[SimpleFeature] = {
+    SelfClosingIterator(fs.getFeatures.features).toList
+  }
+
+  protected class IdFilter(ids: AnyRef*) extends Filter with Id {
+    override def evaluate(o: Any): Boolean = getIDs.contains(o)
+    override def accept(visitor: FilterVisitor, o: Any): AnyRef = visitor.visit(this, o);
+    override def getIDs: util.Set[AnyRef] = ids.toSet.asJava
+    override def getIdentifiers: util.Set[Identifier] = ids.map { id =>
+      new Identifier {
+        override def getID: AnyRef = id
+        override def matches(o: Any): Boolean = id.equals(o)
+      }
+    }.toSet[Identifier].asJava
   }
 }
