@@ -65,7 +65,6 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient,
       if (!cache) {
         topicSftCache.invalidate(typeName)
       }
-      println("Reading cache: " + typeName)
       Option(topicSftCache.get(typeName))
     }
   }
@@ -84,7 +83,6 @@ class ConfluentMetadata(val schemaRegistry: SchemaRegistryClient,
       logger.warn(s"Requested insert on ConfluentMetadata with unsupported key $key. " +
         s"ConfluentMetadata only supports ${GeoMesaMetadata.AttributesKey}")
     } else {
-      println("Inserting cache: " + typeName)
       topicSftCache.put(typeName, value)
     }
   }
