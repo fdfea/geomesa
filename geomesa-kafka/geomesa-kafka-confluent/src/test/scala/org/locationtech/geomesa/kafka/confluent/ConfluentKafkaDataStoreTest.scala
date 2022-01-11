@@ -446,7 +446,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
     }
 
     /*
-    "read simple features then write avro" >> {
+    "write avro and read simple features, then write simple features and read avro" >> {
       "when there are no excluded fields" in new ConfluentKafkaTestContext {
         private val id_read = "1"
         private val expectedGeom_read = generatePoint(10d, 20d)
@@ -460,13 +460,14 @@ class ConfluentKafkaDataStoreTest extends Specification {
         producer.send(new ProducerRecord(topic, id_read, record_read)).get
 
         private val kds = getStore()
-        private val fs_read = kds.getFeatureSource(topic)
+        private val fs = kds.getFeatureSource(topic)
 
         // read feature and check fields
         eventually(10, 100.millis) {
-          SelfClosingIterator(getFeatures(fs_read)).toArray.length mustEqual 1
+          val features = getFeatures(fs)
+          features.length mustEqual 1
 
-          val feature = getFeatures(fs_read).next
+          val feature = features.head
           SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
           feature.getID mustEqual id_read
           feature.getAttribute("shape") mustEqual expectedGeom_read
@@ -481,28 +482,24 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val expectedGeom_write = ByteBuffer.wrap(WKBUtils.write(geom_write))
         private val expectedDate_write = date_write.getTime
 
-        private val messageBuffer = ListBuffer.empty[ConsumerRecord[String, GenericRecord]]
-        private val threads = Executors.newFixedThreadPool(1)
-        threads.execute(pollTopic(topic, messageBuffer))
-
+        private val consumer = getConsumer[String, GenericRecord](topic)
+        private val duration = java.time.Duration.ofMillis(100)
         private val feature_write = ScalaSimpleFeature.create(sft, id_write, geom_write, date_write)
 
         // write feature and check fields
         WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
           FeatureUtils.write(writer, feature_write, useProvidedFid = true)
-
-          eventually(10, 100.millis) {
-            val records = messageBuffer.toList
-            records.size mustEqual 1
-
-            val record = records.head
-            record.key mustEqual id_write
-            record.value.get("shape") mustEqual expectedGeom_write
-            record.value.get("date") mustEqual expectedDate_write
-          }
         }
 
-        threads.shutdownNow()
+        eventually(10, 100.millis) {
+          val records = KafkaConsumerVersions.poll(consumer, duration).asScala
+          records.size mustEqual 1
+
+          val record = records.head
+          record.key mustEqual id_write
+          record.value.get("shape") mustEqual expectedGeom_write
+          record.value.get("date") mustEqual expectedDate_write
+        }
       }
 
       "when there are excluded fields" in new ConfluentKafkaTestContext {
@@ -510,33 +507,34 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val expectedSpeed_read = 12.325d
         private val expectedGeom_read = generatePoint(10d, 20d)
         private val expectedDate_read = new Date(1638915744897L)
-        //private val expectedVisibility_read = ""
+        private val expectedVisibility_read = ""
 
         private val record_read = new GenericData.Record(schema1)
         record_read.put("id", id_read)
         record_read.put("position", WKTUtils.write(expectedGeom_read))
         record_read.put("speed", expectedSpeed_read)
         record_read.put("date", ISODateTimeFormat.dateTime.print(expectedDate_read))
-        //record_read.put("visibility", expectedVisibility_read)
+        record_read.put("visibility", expectedVisibility_read)
 
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id_read, record_read)).get
 
         private val kds = getStore()
-        private val fs_read = kds.getFeatureSource(topic)
+        private val fs = kds.getFeatureSource(topic)
 
         // read feature and check fields
         eventually(10, 100.millis) {
-          SelfClosingIterator(getFeatures(fs_read)).toArray.length mustEqual 1
+          val features = getFeatures(fs)
+          features.length mustEqual 1
 
-          val feature = getFeatures(fs_read).next
+          val feature = features.head
           SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft1
           feature.getID mustEqual id_read
           feature.getAttribute("position") mustEqual expectedGeom_read
           feature.getAttribute("speed") mustEqual expectedSpeed_read
           feature.getAttribute("date") mustEqual expectedDate_read
           feature.getDefaultGeometry mustEqual expectedGeom_read
-          //SecurityUtils.getVisibility(feature) mustEqual expectedVisibility_read
+          SecurityUtils.getVisibility(feature) mustEqual expectedVisibility_read
         }
 
         private val sft = kds.getSchema(topic)
@@ -549,35 +547,30 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val expectedDate_write = date_write.getTime
         //private val expectedVisibility_write = ""
 
-        private val messageBuffer = ListBuffer.empty[ConsumerRecord[String, GenericRecord]]
-        private val threads = Executors.newFixedThreadPool(1)
-        threads.execute(pollTopic(topic, messageBuffer))
-
-        // visibility field doesn't exist in SFT
+        private val consumer = getConsumer[String, GenericRecord](topic)
+        private val duration = java.time.Duration.ofMillis(100)
         private val feature_write = ScalaSimpleFeature.create(sft, id_write, geom_write, expectedSpeed_write, date_write)
 
         // write feature and check fields
         WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
           FeatureUtils.write(writer, feature_write, useProvidedFid = true)
-
-          eventually(10, 100.millis) {
-            val records = messageBuffer.toList
-            records.size mustEqual 1
-
-            val record = records.head
-            record.key mustEqual id_write
-            record.value.get("position") mustEqual expectedGeom_write
-            record.value.get("speed") mustEqual expectedSpeed_write
-            record.value.get("date") mustEqual expectedDate_write
-            //record.value.get("visibility") mustEqual expectedVisibility_write
-          }
         }
 
-        threads.shutdownNow()
+        eventually(10, 100.millis) {
+          val records = KafkaConsumerVersions.poll(consumer, duration).asScala
+          records.size mustEqual 1
+
+          val record = records.head
+          record.key mustEqual id_write
+          record.value.get("position") mustEqual expectedGeom_write
+          record.value.get("speed") mustEqual expectedSpeed_write
+          record.value.get("date") mustEqual expectedDate_write
+          //record.value.get("visibility") mustEqual expectedVisibility_write
+        }
       }
     }
 
-    "write avro then read simple features" >> {
+    "write simple features and read avro, then write avro and read simple features" >> {
       "when there are no excluded fields" in new ConfluentKafkaTestContext {
         private val sft = SimpleFeatureTypes.createType(topic, encodedSft2)
         sft.getUserData.put(SimpleFeatureTypes.Configs.MixedGeometries, "true")
@@ -592,27 +585,24 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val expectedGeom_write = ByteBuffer.wrap(WKBUtils.write(geom_write))
         private val expectedDate_write = date_write.getTime
 
-        private val messageBuffer = ListBuffer.empty[ConsumerRecord[String, GenericRecord]]
-        private val threads = Executors.newFixedThreadPool(1)
-        threads.execute(pollTopic(topic, messageBuffer))
-
-        private val feature = ScalaSimpleFeature.create(sft, id_write, geom_write, date_write)
+        private val consumer = getConsumer[String, GenericRecord](topic)
+        private val duration = java.time.Duration.ofMillis(100)
+        private val feature_write = ScalaSimpleFeature.create(sft, id_write, geom_write, date_write)
 
         // write feature and check fields
         WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
-          FeatureUtils.write(writer, feature, useProvidedFid = true)
-
-          eventually(10, 100.millis) {
-            val records = messageBuffer.toList
-            records.size mustEqual 1
-            val record = records.head
-            record.key mustEqual id_write
-            record.value.get("shape") mustEqual expectedGeom_write
-            record.value.get("date") mustEqual expectedDate_write
-          }
+          FeatureUtils.write(writer, feature_write, useProvidedFid = true)
         }
 
-        threads.shutdownNow()
+        eventually(10, 100.millis) {
+          val records = KafkaConsumerVersions.poll(consumer, duration).asScala
+          records.size mustEqual 1
+
+          val record = records.head
+          record.key mustEqual id_write
+          record.value.get("shape") mustEqual expectedGeom_write
+          record.value.get("date") mustEqual expectedDate_write
+        }
 
         private val id_read = "2"
         private val date_read = 1639145281285L
@@ -626,13 +616,14 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id_read, record)).get
 
-        private val fs_read = kds.getFeatureSource(topic)
+        private val fs = kds.getFeatureSource(topic)
 
         // read feature and check fields
         eventually(10, 100.millis) {
-          SelfClosingIterator(getFeatures(fs_read)).toArray.length mustEqual 1
+          val features = getFeatures(fs)
+          features.length mustEqual 1
 
-          val feature = getFeatures(fs_read).next
+          val feature = features.head
           SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft2
           feature.getID mustEqual id_read
           feature.getAttribute("shape") mustEqual expectedGeom_read
@@ -656,31 +647,27 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val expectedDate_write = date_write.getTime
         //private val expectedVisibility_write = ""
 
-        private val messageBuffer = ListBuffer.empty[ConsumerRecord[String, GenericRecord]]
-        private val threads = Executors.newFixedThreadPool(1)
-        threads.execute(pollTopic(topic, messageBuffer))
-
         // visibility field doesn't exist in SFT
+        private val consumer = getConsumer[String, GenericRecord](topic)
+        private val duration = java.time.Duration.ofMillis(100)
         private val feature_write = ScalaSimpleFeature.create(sft, id_write, geom_write, expectedSpeed_write, date_write)
 
         // write feature and check fields
         WithClose(kds.getFeatureWriterAppend(topic, Transaction.AUTO_COMMIT)) { writer =>
           FeatureUtils.write(writer, feature_write, useProvidedFid = true)
-
-          eventually(10, 100.millis) {
-            val records = messageBuffer.toList
-            records.size mustEqual 1
-
-            val record = records.head
-            record.key mustEqual id_write
-            record.value.get("position") mustEqual expectedGeom_write
-            record.value.get("speed") mustEqual expectedSpeed_write
-            record.value.get("date") mustEqual expectedDate_write
-            //record.value.get("visibility") mustEqual expectedVisibility_write
-          }
         }
 
-        threads.shutdownNow()
+        eventually(10, 100.millis) {
+          val records = KafkaConsumerVersions.poll(consumer, duration).asScala
+          records.size mustEqual 1
+
+          val record = records.head
+          record.key mustEqual id_write
+          record.value.get("position") mustEqual expectedGeom_write
+          record.value.get("speed") mustEqual expectedSpeed_write
+          record.value.get("date") mustEqual expectedDate_write
+          //record.value.get("visibility") mustEqual expectedVisibility_write
+        }
 
         private val id_read = "1"
         private val expectedSpeed_read = 12.325d
@@ -698,13 +685,14 @@ class ConfluentKafkaDataStoreTest extends Specification {
         private val producer = getProducer[String, GenericRecord]()
         producer.send(new ProducerRecord(topic, id_read, record_read)).get
 
-        private val fs_read = kds.getFeatureSource(topic)
+        private val fs = kds.getFeatureSource(topic)
 
         // read feature and check fields
         eventually(10, 100.millis) {
-          SelfClosingIterator(getFeatures(fs_read)).toArray.length mustEqual 1
+          val features = getFeatures(fs)
+          features.length mustEqual 1
 
-          val feature = getFeatures(fs_read).next
+          val feature = features.head
           SimpleFeatureTypes.encodeType(feature.getType, includeUserData = false) mustEqual encodedSft1
           feature.getID mustEqual id_read
           feature.getAttribute("position") mustEqual expectedGeom_read
@@ -715,7 +703,7 @@ class ConfluentKafkaDataStoreTest extends Specification {
         }
       }
     }
-    */
+     */
   }
 }
 
