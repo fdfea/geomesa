@@ -118,8 +118,8 @@
 
         <!-- testing properties -->
         <maven.test.jvmargs>-Xms512m -Xmx4g -XX:-UseGCOverheadLimit -XX:MaxJavaStackTraceDepth=1000000</maven.test.jvmargs>
-        <test.fork.count>4</test.fork.count>
-        <test.fork.reuse>true</test.fork.reuse>
+        <test.fork.count>1</test.fork.count>
+        <test.fork.reuse>false</test.fork.reuse>
         <!-- arrow tests become extremely slow with assertions enabled-->
         <test.enable.assertions>false</test.enable.assertions>
 
@@ -2396,6 +2396,18 @@
 
             <!-- test dependencies -->
             <dependency>
+                <groupId>log4j</groupId>
+                <artifactId>log4j</artifactId>
+                <version>1.2.17</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-log4j12</artifactId>
+                <version>1.7.25</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
                 <groupId>ch.qos.reload4j</groupId>
                 <artifactId>reload4j</artifactId>
                 <version>${reload4j.version}</version>
@@ -3018,8 +3030,8 @@
                                         <exclude>*:*_2.10</exclude>
                                         <exclude>*:*_2.11</exclude>
                                         <exclude>*:*_2.13</exclude>
-                                        <exclude>log4j:*</exclude>
-                                        <exclude>org.slf4j:slf4j-log4j12</exclude>
+                                        <!--<exclude>log4j:*</exclude>
+                                        <exclude>org.slf4j:slf4j-log4j12</exclude>-->
                                     </excludes>
                                 </bannedDependencies>
                                 <requireProperty>

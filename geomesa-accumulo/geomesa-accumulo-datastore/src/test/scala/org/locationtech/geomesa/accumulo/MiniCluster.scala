@@ -41,13 +41,17 @@ case object MiniCluster extends LazyLogging {
     logger.info(s"Starting Accumulo minicluster at $miniClusterTempDir")
     val config = new MiniAccumuloConfig(miniClusterTempDir.toFile, Users.root.password)
     sys.props.get("geomesa.accumulo.test.tablet.servers").map(_.toInt).foreach(config.setNumTservers)
+    logger.info(s"Temp dir contents for $miniClusterTempDir: ${miniClusterTempDir.toFile.list().mkString(",")}")
     val cluster = new MiniAccumuloCluster(config)
+    logger.info(s"Created config for $miniClusterTempDir")
     // required for zookeeper 3.5
     WithClose(new FileWriter(new File(miniClusterTempDir.toFile, "conf/zoo.cfg"), true)) { writer =>
       writer.write("admin.enableServer=false\n") // disable the admin server, which tries to bind to 8080
       writer.write("4lw.commands.whitelist=*\n") // enable 'ruok', which the minicluster uses to check zk status
     }
+    logger.info(s"Starting cluster for $miniClusterTempDir")
     cluster.start()
+    logger.info(s"Started cluster for $miniClusterTempDir")
 
     // set up users and authorizations
     val connector = cluster.getConnector(Users.root.name, Users.root.password)
@@ -63,7 +67,7 @@ case object MiniCluster extends LazyLogging {
 
     AccumuloVersion.close(connector)
 
-    logger.info("Started Accmulo minicluster")
+    logger.info("Started Accumulo minicluster")
 
     cluster
   }
