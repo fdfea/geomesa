@@ -51,10 +51,6 @@
             <groupId>org.geotools</groupId>
             <artifactId>gt-main</artifactId>
         </dependency>
-        <dependency>
-            <groupId>ch.qos.reload4j</groupId>
-            <artifactId>reload4j</artifactId>
-        </dependency>
 
         <!-- provided deps -->
         <dependency>
@@ -84,6 +80,15 @@
             <artifactId>hbase-testing-util</artifactId>
             <version>${hbase.version}</version>
             <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
         </dependency>
     </dependencies>
 
