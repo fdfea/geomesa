@@ -2396,6 +2396,18 @@
 
             <!-- test dependencies -->
             <dependency>
+                <groupId>log4j</groupId>
+                <artifactId>log4j</artifactId>
+                <version>1.2.17</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-log4j12</artifactId>
+                <version>1.7.25</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
                 <groupId>ch.qos.reload4j</groupId>
                 <artifactId>reload4j</artifactId>
                 <version>${reload4j.version}</version>
@@ -2703,6 +2715,9 @@
                             <geomesa.scan.ranges.target>500</geomesa.scan.ranges.target>
                             <geomesa.accumulo.test.tablet.servers>1</geomesa.accumulo.test.tablet.servers>
                             <geomesa.hbase.test.region.servers>1</geomesa.hbase.test.region.servers>
+                            <!-- ZooKeeper uses a JMX feature of log4j that reload4j doesn't support.
+                                 We need to disable it for the mini clusters to work in unit tests -->
+                            <zookeeper.jmx.log4j.disable>true</zookeeper.jmx.log4j.disable>
                             <java.util.logging.config.file>logging.properties</java.util.logging.config.file>
                             <org.jboss.logging.provider>slf4j</org.jboss.logging.provider>
                         </systemPropertyVariables>
@@ -3018,8 +3033,8 @@
                                         <exclude>*:*_2.10</exclude>
                                         <exclude>*:*_2.11</exclude>
                                         <exclude>*:*_2.13</exclude>
-                                        <exclude>log4j:*</exclude>
-                                        <exclude>org.slf4j:slf4j-log4j12</exclude>
+                                        <!--<exclude>log4j:*</exclude>
+                                        <exclude>org.slf4j:slf4j-log4j12</exclude>-->
                                     </excludes>
                                 </bannedDependencies>
                                 <requireProperty>
