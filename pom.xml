@@ -3033,8 +3033,8 @@
                                         <exclude>*:*_2.10</exclude>
                                         <exclude>*:*_2.11</exclude>
                                         <exclude>*:*_2.13</exclude>
-                                        <!--<exclude>log4j:*</exclude>
-                                        <exclude>org.slf4j:slf4j-log4j12</exclude>-->
+                                        <exclude>log4j:*</exclude>
+                                        <exclude>org.slf4j:slf4j-log4j12</exclude>
                                     </excludes>
                                 </bannedDependencies>
                                 <requireProperty>
