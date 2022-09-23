@@ -12,10 +12,12 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.accumulo.core.client.security.tokens.PasswordToken
 import org.apache.accumulo.core.security.{Authorizations, NamespacePermission, SystemPermission}
 import org.apache.accumulo.minicluster.{MiniAccumuloCluster, MiniAccumuloConfig}
+import org.apache.accumulo.miniclusterImpl.MiniAccumuloConfigImpl
 import org.locationtech.geomesa.utils.io.{PathUtils, WithClose}
 
 import java.io.{File, FileWriter}
 import java.nio.file.Files
+import java.util.Collections
 
 case object MiniCluster extends LazyLogging {
 
@@ -41,6 +43,11 @@ case object MiniCluster extends LazyLogging {
     logger.info(s"Starting Accumulo minicluster at $miniClusterTempDir")
     val config = new MiniAccumuloConfig(miniClusterTempDir.toFile, Users.root.password)
     sys.props.get("geomesa.accumulo.test.tablet.servers").map(_.toInt).foreach(config.setNumTservers)
+    // use reflection to get around package level access to disable log4j since we've removed it
+    val getImpl = config.getClass.getDeclaredMethod("getImpl")
+    getImpl.setAccessible(true)
+    getImpl.invoke(config).asInstanceOf[MiniAccumuloConfigImpl]
+        .setSystemProperties(Collections.singletonMap("zookeeper.jmx.log4j.disable", "true"))
     logger.info(s"Temp dir contents for $miniClusterTempDir: ${miniClusterTempDir.toFile.list().mkString(",")}")
     val cluster = new MiniAccumuloCluster(config)
     logger.info(s"Created config for $miniClusterTempDir")
