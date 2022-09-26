@@ -40,8 +40,8 @@ function dependencies() {
     "net.sf.jopt-simple:jopt-simple:${jopt_install_version}:jar"
     "com.yammer.metrics:metrics-core:2.2.0:jar"
     "com.google.guava:guava:${guava_install_version}:jar"
-    "org.slf4j:slf4j-log4j12:1.7.25:jar"
-    "log4j:log4j:1.2.17:jar"
+    "ch.qos.reload4j:reload4j:1.2.22:jar"
+    "org.slf4j:slf4j-reload4j:1.7.36:jar"
   )
 
   # compare the version of zookeeper to determine if we need zookeeper-jute (version >= 3.5.5)

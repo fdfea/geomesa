@@ -53,7 +53,8 @@ function dependencies() {
     "org.apache.htrace:htrace-core:3.1.0-incubating:jar"
     "org.apache.htrace:htrace-core4:4.1.0-incubating:jar"
     "com.google.guava:guava:${guava_install_version}:jar"
-    "org.slf4j:slf4j-log4j12:1.7.25:jar"
+    "ch.qos.reload4j:reload4j:1.2.22:jar"
+    "org.slf4j:slf4j-reload4j:1.7.36:jar"
   )
 
   # add accumulo 1.x jars if needed

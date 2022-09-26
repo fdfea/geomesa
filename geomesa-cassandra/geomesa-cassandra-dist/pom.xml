@@ -20,7 +20,6 @@
     </properties>
 
     <dependencies>
-
         <!-- Cassandra Tools -->
         <dependency>
             <groupId>org.locationtech.geomesa</groupId>
@@ -63,7 +62,6 @@
             <artifactId>reload4j</artifactId>
             <scope>provided</scope>
         </dependency>
-
     </dependencies>
 
     <build>
