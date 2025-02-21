@@ -1,1 +1,3 @@
+org.locationtech.geomesa.fs.storage.converter.pathfilter.AttributePathFiltering$AttributePathFilteringFactory
+org.locationtech.geomesa.fs.storage.converter.pathfilter.CompositePathFiltering$CompositePathFilteringFactory
 org.locationtech.geomesa.fs.storage.converter.pathfilter.DtgPathFiltering$DtgPathFilteringFactory

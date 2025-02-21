@@ -27,7 +27,7 @@ class DtgPathFiltering(attribute: String, pattern: Pattern, format: DateTimeForm
   def apply(filter: Filter): PathFilter = {
     val filterIntervals = FilterHelper.extractIntervals(filter, attribute, handleExclusiveBounds = true)
     path => try {
-      val time = parseDtg(path.getName).toInstant
+      val time = parseDtg(path.toString).toInstant
       val millis = buffer.toMillis
       val lower = ZonedDateTime.ofInstant(time.minusMillis(millis), ZoneOffset.UTC)
       val upper = ZonedDateTime.ofInstant(time.plusMillis(millis), ZoneOffset.UTC)
@@ -43,7 +43,7 @@ class DtgPathFiltering(attribute: String, pattern: Pattern, format: DateTimeForm
       included
     } catch {
       case NonFatal(ex) =>
-        logger.warn(s"Failed to evaluate filter for path '${path.getName}'", ex)
+        logger.warn(s"Failed to evaluate '${DtgPathFiltering.Name}' filter for path '${path.getName}'", ex)
         true
     }
   }
@@ -71,7 +71,7 @@ object DtgPathFiltering extends LazyLogging {
   val Name = "dtg"
 
   object Config {
-    val Attribute = "attribute"
+    val Attribute = "dtg-attribute"
     val Pattern = "pattern"
     val Format = "format"
     val Buffer = "buffer"
@@ -81,19 +81,19 @@ object DtgPathFiltering extends LazyLogging {
     override def load(config: NamedOptions): Option[PathFiltering] = {
       if (config.name != Name) { None } else {
         val attribute = config.options.getOrElse(Config.Attribute, null)
-        require(attribute != null, s"$Name path filter requires a dtg attribute config '${Config.Attribute}'")
+        require(attribute != null, s"${classOf[DtgPathFiltering].getName} requires a dtg attribute config '${Config.Attribute}'")
         val patternConfig = config.options.getOrElse(Config.Pattern, null)
-        require(patternConfig != null, s"$Name path filter requires a dtg pattern config '${Config.Pattern}'")
+        require(patternConfig != null, s"${classOf[DtgPathFiltering].getName} requires a dtg pattern config '${Config.Pattern}'")
         val formatConfig = config.options.getOrElse(Config.Format, null)
-        require(formatConfig != null, s"$Name path filter requires a dtg format config '${Config.Format}'")
+        require(formatConfig != null, s"${classOf[DtgPathFiltering].getName} requires a dtg format config '${Config.Format}'")
         val bufferConfig = config.options.getOrElse(Config.Buffer, null)
-        require(bufferConfig != null, s"$Name path filter requires a buffer duration config '${Config.Buffer}'")
+        require(bufferConfig != null, s"${classOf[DtgPathFiltering].getName} requires a buffer duration config '${Config.Buffer}'")
 
         val pattern = Pattern.compile(patternConfig)
         val format = DateTimeFormatter.ofPattern(formatConfig).withZone(ZoneOffset.UTC)
         val buffer = Duration.apply(bufferConfig)
         val pathFiltering = new DtgPathFiltering(attribute, pattern, format, buffer)
-        logger.info(s"Loaded PathFiltering: $pathFiltering")
+        logger.info(s"Loaded $pathFiltering")
         Some(pathFiltering)
       }
     }

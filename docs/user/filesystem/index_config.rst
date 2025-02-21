@@ -259,16 +259,28 @@ Configuring Path Filters
   Path filtering is supported for ``converter`` encoding only.
 
 The FSDS can filter paths within a partition for more granular control of queries. Path filtering is configured
-through the user data key ``geomesa.fs.path-filter.name``.
+through the user data key ``geomesa.fs.path-filter.name``. Options for a given path filter are configured through
+the key ``geomesa.fs.path-filter.opts``.
 
-Currently, the only implementation is the ``dtg`` path filter, whose purpose is to parse a datetime from the given
-path and compare it to the query filter to include or exclude the file from the query. The following options are
-required for the ``dtg`` path filter, configured through the key ``geomesa.fs.path-filter.opts``:
+The ``dtg`` path filter parses a datetime from a path and compares it to the query filter. The following options are
+required for the ``dtg`` path filter:
 
-* ``attribute`` - The ``Date`` attribute in the query to compare against.
+* ``dtg-attribute`` - The ``Date`` attribute in the query to compare against.
 * ``pattern`` - The regular expression, with a single capturing group, to extract a datetime string from the path.
 * ``format`` - The datetime formatting pattern to parse a date from the regex capture.
 * ``buffer`` - The duration to buffer the bounds of the parsed datetime by within the current partition. To buffer time
   across partitions, see the ``receipt-time`` partition scheme.
+
+The ``attribute`` path filter compares a path to the value of an attribute in the query filter. The following options
+are required for the ``attribute`` path filter:
+
+* ``file-attribute`` - The ``String`` attribute in the query to compare against.
+* ``use-full-path`` - (Optional) Whether to compare against the full path, or just the filename, defaults to ``false``.
+
+The ``composite`` path filter combines multiple path filters and is named by concatenating the names of the constituent
+filters, separated with commas, e.g. ``attribute,dtg``. The configuration options for each child filter should be
+merged into a single configuration. The following option is required for the ``composite`` path filter:
+
+* ``combiner`` - The boolean operator used to combine the results of the child filters, either ``and`` or ``or``.
 
 Custom path filters can be loaded via SPI.

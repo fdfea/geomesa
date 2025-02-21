@@ -91,7 +91,7 @@ class ConverterFileSystemStorageTest extends Specification with LazyLogging {
       conf.set(ConverterStorageFactory.PartitionOptsPrefix + "buffer", "10 minutes")
       conf.set(ConverterStorageFactory.LeafStorageParam, "false")
       conf.set(ConverterStorageFactory.PathFilterName, "dtg")
-      conf.set(ConverterStorageFactory.PathFilterOptsPrefix + "attribute", "dtg")
+      conf.set(ConverterStorageFactory.PathFilterOptsPrefix + "dtg-attribute", "dtg")
       conf.set(ConverterStorageFactory.PathFilterOptsPrefix + "pattern", "^data-(.*)\\.csv$")
       conf.set(ConverterStorageFactory.PathFilterOptsPrefix + "format", "yyyyMMddHHmm")
       conf.set(ConverterStorageFactory.PathFilterOptsPrefix + "buffer", "2 hours")

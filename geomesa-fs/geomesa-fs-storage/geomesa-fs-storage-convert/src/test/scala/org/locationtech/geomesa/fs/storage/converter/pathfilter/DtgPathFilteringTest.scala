@@ -20,24 +20,24 @@ class DtgPathFilteringTest extends Specification {
 
   import org.locationtech.geomesa.fs.storage.converter.pathfilter.DtgPathFiltering.Config._
 
-  "DtgPathFilterFactory" should {
+  s"${classOf[DtgPathFiltering].getName}" should {
     "parse, format, buffer, and filter a dtg from a file path" in {
       val attribute = "dtg"
-      val pattern = "^data-(.*)\\..*$"
+      val pattern = "^.*/data-(.*)\\..*$"
       val format = "yyyyMMddHHmm"
       val buffer = "6 hours"
       val config = NamedOptions(DtgPathFiltering.Name,
         Map(Attribute -> attribute, Pattern -> pattern, Format -> format, Buffer -> buffer))
 
-      val pathFilterFactory = PathFilteringFactory.load(config)
-      pathFilterFactory must beSome { factory: PathFiltering =>
+      val pathFiltering = PathFilteringFactory.load(config)
+      pathFiltering must beSome { factory: PathFiltering =>
         factory must haveClass[DtgPathFiltering]
       }
 
       val filterText = s"$attribute DURING 2024-12-10T00:00:00Z/2024-12-11T00:00:00Z " +
         s"OR $attribute = 2024-12-10T00:00:00Z OR $attribute = 2024-12-11T00:00:00Z"
       val filter = ECQL.toFilter(filterText)
-      val pathFilter = pathFilterFactory.get.apply(filter)
+      val pathFilter = pathFiltering.get.apply(filter)
 
       val path1 = new Path("/geomesa/fs/data-202412080000.csv")
       val path2 = new Path("/geomesa/fs/data-202412092200.csv")
